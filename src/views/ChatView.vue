@@ -5,8 +5,16 @@
       <!-- User Info -->
       <div class="p-4 border-b border-gray-200 bg-gray-50">
         <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-semibold">
+          <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-semibold relative">
             {{ authStore.username?.charAt(0).toUpperCase() }}
+            <!-- Connection status indicator -->
+            <span 
+              :class="[
+                'absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white',
+                chatStore.isConnected ? 'bg-green-500' : 'bg-yellow-500'
+              ]"
+              :title="chatStore.isConnected ? 'Connected to Nostr' : 'Connecting...'"
+            ></span>
           </div>
           <div class="flex-1 min-w-0">
             <h3 class="font-semibold text-gray-900 truncate">{{ authStore.username }}</h3>
@@ -39,10 +47,26 @@
       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
       @click.self="showSettings = false"
     >
-      <div class="bg-white rounded-lg p-6 w-full max-w-md mx-4 shadow-xl">
+      <div class="bg-white rounded-lg p-6 w-full max-w-md mx-4 shadow-xl max-h-[90vh] overflow-y-auto">
         <h3 class="text-xl font-semibold mb-6 text-gray-900">Settings</h3>
         
         <div class="space-y-6">
+          <!-- Connection Status -->
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-2">Nostr Relay Status</label>
+            <div class="flex items-center gap-2">
+              <span 
+                :class="[
+                  'w-3 h-3 rounded-full',
+                  chatStore.isConnected ? 'bg-green-500' : 'bg-yellow-500'
+                ]"
+              ></span>
+              <span :class="chatStore.isConnected ? 'text-green-600' : 'text-yellow-600'">
+                {{ chatStore.isConnected ? 'Connected' : 'Connecting...' }}
+              </span>
+            </div>
+          </div>
+          
           <!-- Your Identity -->
           <div>
             <label class="block text-sm font-medium text-gray-600 mb-2">Your Username</label>
@@ -125,11 +149,13 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { useChatStore } from '../stores/chat'
 import ChatList from '../components/ChatList.vue'
 import ChatWindow from '../components/ChatWindow.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const chatStore = useChatStore()
 
 const showSettings = ref(false)
 const showPrivateKey = ref(false)
@@ -146,6 +172,7 @@ const copyKey = async (key) => {
 
 const handleLogout = async () => {
   if (confirm('Are you sure you want to logout? Make sure you have backed up your private key!')) {
+    chatStore.disconnectNostr()
     await authStore.logout()
     router.push('/')
   }

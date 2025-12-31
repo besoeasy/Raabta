@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { deriveSharedSecret, encrypt, decrypt, getUsername } from 'daku'
 import { db, CACHE_DURATION, cleanupExpiredMessages } from '../db'
 import { useAuthStore } from './auth'
+import { nostrRelay } from '../services/nostr'
 
 export const useChatStore = defineStore('chat', () => {
   const authStore = useAuthStore()
@@ -15,8 +16,14 @@ export const useChatStore = defineStore('chat', () => {
   
   // Currently active chat
   const activeChat = ref(null)
+  
+  // Nostr connection status
+  const isConnected = ref(false)
+  
+  // Processed event IDs to avoid duplicates
+  const processedEvents = ref(new Set())
 
-  // Load data from IndexedDB
+  // Load data from IndexedDB and connect to Nostr
   const init = async () => {
     try {
       // Clean expired messages
@@ -34,6 +41,10 @@ export const useChatStore = defineStore('chat', () => {
           grouped[msg.conversationId] = []
         }
         grouped[msg.conversationId].push(msg)
+        // Track processed events
+        if (msg.eventId) {
+          processedEvents.value.add(msg.eventId)
+        }
       }
       
       // Sort messages by timestamp
@@ -42,9 +53,105 @@ export const useChatStore = defineStore('chat', () => {
       }
       
       messages.value = grouped
+      
+      // Connect to Nostr relays if authenticated
+      if (authStore.privateKey) {
+        await connectNostr()
+      }
     } catch (error) {
       console.error('Failed to load chat data:', error)
     }
+  }
+  
+  // Connect to Nostr and subscribe to messages
+  const connectNostr = async () => {
+    if (!authStore.privateKey) return
+    
+    try {
+      await nostrRelay.subscribe(authStore.privateKey, handleIncomingMessage)
+      isConnected.value = true
+      console.log('Connected to Nostr relays')
+    } catch (error) {
+      console.error('Failed to connect to Nostr:', error)
+      isConnected.value = false
+    }
+  }
+  
+  // Handle incoming message from Nostr
+  const handleIncomingMessage = async (event) => {
+    // Skip if already processed
+    if (processedEvents.value.has(event.eventId)) {
+      return
+    }
+    
+    // Skip our own messages (we already have them locally)
+    // Compare using nostr pubkey if available, or convert daku to nostr
+    const { publicKey: myNostrPubKey } = nostrRelay.getNostrKeys(authStore.privateKey)
+    if (event.nostrPubKey === myNostrPubKey) {
+      return
+    }
+    
+    try {
+      // event.from is already in daku format (66-char with prefix) from nostr service
+      const senderDakuPubKey = event.from
+      
+      console.log('Processing incoming message from daku pubkey:', senderDakuPubKey)
+      
+      // Derive shared secret using sender's daku public key
+      const sharedSecret = deriveSharedSecret(authStore.privateKey, senderDakuPubKey)
+      
+      // Decrypt message
+      const decryptedText = await decrypt(event.encryptedText, sharedSecret)
+      
+      if (!decryptedText) {
+        console.error('Failed to decrypt incoming message')
+        return
+      }
+      
+      console.log('Message decrypted successfully:', decryptedText.substring(0, 20) + '...')
+      
+      // Auto-add contact if not exists
+      if (!contacts.value.find(c => c.publicKey === senderDakuPubKey)) {
+        await addContact(senderDakuPubKey)
+      }
+      
+      const message = {
+        conversationId: senderDakuPubKey,
+        text: decryptedText,
+        encryptedText: event.encryptedText,
+        from: senderDakuPubKey,
+        to: authStore.publicKey,
+        timestamp: event.timestamp,
+        isSent: false,
+        isRead: activeChat.value === senderDakuPubKey,
+        expiresAt: event.timestamp + CACHE_DURATION,
+        eventId: event.eventId
+      }
+      
+      // Save to IndexedDB
+      const id = await db.messages.add(message)
+      message.id = id
+      
+      // Track processed event
+      processedEvents.value.add(event.eventId)
+      
+      // Update local state
+      if (!messages.value[senderDakuPubKey]) {
+        messages.value[senderDakuPubKey] = []
+      }
+      messages.value[senderDakuPubKey].push(message)
+      messages.value[senderDakuPubKey].sort((a, b) => a.timestamp - b.timestamp)
+      
+      console.log('Received message from:', getUsername(senderDakuPubKey))
+    } catch (error) {
+      console.error('Failed to process incoming message:', error)
+    }
+  }
+  
+  // Disconnect from Nostr
+  const disconnectNostr = () => {
+    nostrRelay.close()
+    isConnected.value = false
   }
 
   // Add new contact by public key
@@ -109,6 +216,18 @@ export const useChatStore = defineStore('chat', () => {
       const encryptedText = await encrypt(messageText, sharedSecret)
       
       const now = Date.now()
+      
+      // Send via Nostr relay
+      let eventId = null
+      if (isConnected.value) {
+        try {
+          eventId = await nostrRelay.sendMessage(authStore.privateKey, contactPublicKey, encryptedText)
+          console.log('Message sent via Nostr, event ID:', eventId)
+        } catch (error) {
+          console.error('Failed to send via Nostr:', error)
+        }
+      }
+      
       const message = {
         conversationId: contactPublicKey,
         text: messageText,
@@ -118,12 +237,18 @@ export const useChatStore = defineStore('chat', () => {
         timestamp: now,
         isSent: true,
         isRead: true,
-        expiresAt: now + CACHE_DURATION // Cache for 1 year
+        expiresAt: now + CACHE_DURATION,
+        eventId
       }
       
       // Save to IndexedDB
       const id = await db.messages.add(message)
       message.id = id
+      
+      // Track processed event
+      if (eventId) {
+        processedEvents.value.add(eventId)
+      }
       
       // Update local state
       if (!messages.value[contactPublicKey]) {
@@ -259,7 +384,10 @@ export const useChatStore = defineStore('chat', () => {
     activeChat,
     sortedContacts,
     totalUnread,
+    isConnected,
     init,
+    connectNostr,
+    disconnectNostr,
     addContact,
     removeContact,
     sendMessage,

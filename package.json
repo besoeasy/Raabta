@@ -15,6 +15,7 @@
     "@tailwindcss/vite": "^4.1.18",
     "daku": "^0.1.0",
     "dexie": "^4.2.1",
+    "nostr-tools": "^2.19.4",
     "pinia": "^3.0.4",
     "tailwindcss": "^4.1.18",
     "vue": "^3.5.26",
