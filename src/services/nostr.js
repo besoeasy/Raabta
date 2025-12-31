@@ -2,13 +2,13 @@ import { SimplePool, finalizeEvent, getPublicKey } from 'nostr-tools'
 import { hexToBytes } from '@noble/hashes/utils'
 import { ref } from 'vue'
 
-// Default public relays
+// Default public relays - using more reliable ones
 const DEFAULT_RELAYS = [
   'wss://relay.damus.io',
-  'wss://nos.lol', 
-  'wss://relay.nostr.band',
-  'wss://nostr.wine',
-  'wss://relay.snort.social'
+  'wss://nos.lol',
+  'wss://relay.snort.social',
+  'wss://nostr.mom',
+  'wss://relay.nostr.bg'
 ]
 
 // Custom event kind for Raabta encrypted messages

@@ -122,25 +122,56 @@ export const useChatStore = defineStore('chat', () => {
     }
     
     try {
-      const senderDakuPubKey = event.from
+      // Try to find existing contact with this nostr pubkey
+      const existingContact = contacts.value.find(c => {
+        // Check if contact's daku pubkey (without prefix) matches sender's nostr pubkey
+        return c.publicKey.slice(2) === event.nostrPubKey
+      })
       
-      console.log('[CHAT] Deriving shared secret with sender...')
-      const sharedSecret = deriveSharedSecret(authStore.privateKey, senderDakuPubKey)
-      console.log('[CHAT] Shared secret derived (length):', sharedSecret.length)
+      let senderDakuPubKey
+      let decryptedText = null
       
-      console.log('[CHAT] Decrypting message...')
-      const decryptedText = await decrypt(event.encryptedText, sharedSecret)
+      if (existingContact) {
+        // Use the stored daku pubkey with correct prefix
+        senderDakuPubKey = existingContact.publicKey
+        console.log('[CHAT] Found existing contact with pubkey:', senderDakuPubKey)
+        
+        const sharedSecret = deriveSharedSecret(authStore.privateKey, senderDakuPubKey)
+        decryptedText = await decrypt(event.encryptedText, sharedSecret)
+      } else {
+        // Try both prefixes (02 and 03) since we don't know the original
+        console.log('[CHAT] No existing contact, trying both prefixes...')
+        
+        for (const prefix of ['02', '03']) {
+          const tryPubKey = prefix + event.nostrPubKey
+          console.log('[CHAT] Trying prefix:', prefix, '-> pubkey:', tryPubKey)
+          
+          try {
+            const sharedSecret = deriveSharedSecret(authStore.privateKey, tryPubKey)
+            const result = await decrypt(event.encryptedText, sharedSecret)
+            
+            if (result) {
+              decryptedText = result
+              senderDakuPubKey = tryPubKey
+              console.log('[CHAT] ✓ Decryption successful with prefix:', prefix)
+              break
+            }
+          } catch (e) {
+            console.log('[CHAT] Prefix', prefix, 'failed:', e.message)
+          }
+        }
+      }
       
       if (!decryptedText) {
-        console.error('[CHAT] ✗ Failed to decrypt - returned null')
+        console.error('[CHAT] ✗ Failed to decrypt with any prefix')
         return
       }
       
       console.log('[CHAT] ✓ Decrypted:', decryptedText)
       
       // Auto-add contact if not exists
-      if (!contacts.value.find(c => c.publicKey === senderDakuPubKey)) {
-        console.log('[CHAT] Adding new contact...')
+      if (!existingContact) {
+        console.log('[CHAT] Adding new contact with pubkey:', senderDakuPubKey)
         await addContact(senderDakuPubKey)
       }
       
