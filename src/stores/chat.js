@@ -25,15 +25,23 @@ export const useChatStore = defineStore('chat', () => {
 
   // Load data from IndexedDB and connect to Nostr
   const init = async () => {
+    console.log('[CHAT] === INITIALIZING CHAT STORE ===')
+    console.log('[CHAT] Auth store private key exists:', !!authStore.privateKey)
+    console.log('[CHAT] Auth store public key:', authStore.publicKey)
+    
     try {
       // Clean expired messages
       await cleanupExpiredMessages()
+      console.log('[CHAT] Cleaned expired messages')
       
       // Load contacts
       contacts.value = await db.contacts.toArray()
+      console.log('[CHAT] Loaded contacts:', contacts.value.length)
       
       // Load all messages grouped by conversation
       const allMessages = await db.messages.toArray()
+      console.log('[CHAT] Loaded messages:', allMessages.length)
+      
       const grouped = {}
       
       for (const msg of allMessages) {
@@ -56,62 +64,83 @@ export const useChatStore = defineStore('chat', () => {
       
       // Connect to Nostr relays if authenticated
       if (authStore.privateKey) {
+        console.log('[CHAT] Connecting to Nostr...')
         await connectNostr()
+        console.log('[CHAT] Nostr connection complete, isConnected:', isConnected.value)
+      } else {
+        console.log('[CHAT] No private key, skipping Nostr connection')
       }
     } catch (error) {
-      console.error('Failed to load chat data:', error)
+      console.error('[CHAT] Failed to load chat data:', error)
     }
   }
   
   // Connect to Nostr and subscribe to messages
   const connectNostr = async () => {
-    if (!authStore.privateKey) return
+    console.log('[CHAT] === CONNECTING TO NOSTR ===')
+    console.log('[CHAT] Private key exists:', !!authStore.privateKey)
+    
+    if (!authStore.privateKey) {
+      console.log('[CHAT] No private key, aborting')
+      return
+    }
     
     try {
+      console.log('[CHAT] Subscribing to messages (waiting for EOSE)...')
       await nostrRelay.subscribe(authStore.privateKey, handleIncomingMessage)
-      isConnected.value = true
-      console.log('Connected to Nostr relays')
+      // Use the nostr service's connected status
+      isConnected.value = nostrRelay.connected.value
+      console.log('[CHAT] ✓ Connected to Nostr relays, isConnected:', isConnected.value)
     } catch (error) {
-      console.error('Failed to connect to Nostr:', error)
+      console.error('[CHAT] ✗ Failed to connect to Nostr:', error)
       isConnected.value = false
     }
   }
   
   // Handle incoming message from Nostr
   const handleIncomingMessage = async (event) => {
+    console.log('[CHAT] === INCOMING MESSAGE ===')
+    console.log('[CHAT] Event ID:', event.eventId)
+    console.log('[CHAT] From (daku pubkey):', event.from)
+    console.log('[CHAT] From (nostr pubkey):', event.nostrPubKey)
+    console.log('[CHAT] Encrypted text length:', event.encryptedText?.length)
+    
     // Skip if already processed
     if (processedEvents.value.has(event.eventId)) {
+      console.log('[CHAT] Already processed, skipping')
       return
     }
     
     // Skip our own messages (we already have them locally)
-    // Compare using nostr pubkey if available, or convert daku to nostr
     const { publicKey: myNostrPubKey } = nostrRelay.getNostrKeys(authStore.privateKey)
+    console.log('[CHAT] My nostr pubkey:', myNostrPubKey)
+    console.log('[CHAT] Sender nostr pubkey:', event.nostrPubKey)
+    
     if (event.nostrPubKey === myNostrPubKey) {
+      console.log('[CHAT] This is my own message, skipping')
       return
     }
     
     try {
-      // event.from is already in daku format (66-char with prefix) from nostr service
       const senderDakuPubKey = event.from
       
-      console.log('Processing incoming message from daku pubkey:', senderDakuPubKey)
-      
-      // Derive shared secret using sender's daku public key
+      console.log('[CHAT] Deriving shared secret with sender...')
       const sharedSecret = deriveSharedSecret(authStore.privateKey, senderDakuPubKey)
+      console.log('[CHAT] Shared secret derived (length):', sharedSecret.length)
       
-      // Decrypt message
+      console.log('[CHAT] Decrypting message...')
       const decryptedText = await decrypt(event.encryptedText, sharedSecret)
       
       if (!decryptedText) {
-        console.error('Failed to decrypt incoming message')
+        console.error('[CHAT] ✗ Failed to decrypt - returned null')
         return
       }
       
-      console.log('Message decrypted successfully:', decryptedText.substring(0, 20) + '...')
+      console.log('[CHAT] ✓ Decrypted:', decryptedText)
       
       // Auto-add contact if not exists
       if (!contacts.value.find(c => c.publicKey === senderDakuPubKey)) {
+        console.log('[CHAT] Adding new contact...')
         await addContact(senderDakuPubKey)
       }
       
@@ -128,23 +157,20 @@ export const useChatStore = defineStore('chat', () => {
         eventId: event.eventId
       }
       
-      // Save to IndexedDB
       const id = await db.messages.add(message)
       message.id = id
       
-      // Track processed event
       processedEvents.value.add(event.eventId)
       
-      // Update local state
       if (!messages.value[senderDakuPubKey]) {
         messages.value[senderDakuPubKey] = []
       }
       messages.value[senderDakuPubKey].push(message)
       messages.value[senderDakuPubKey].sort((a, b) => a.timestamp - b.timestamp)
       
-      console.log('Received message from:', getUsername(senderDakuPubKey))
+      console.log('[CHAT] ✓ Message saved and added to UI')
     } catch (error) {
-      console.error('Failed to process incoming message:', error)
+      console.error('[CHAT] ✗ Failed to process incoming message:', error)
     }
   }
   
@@ -206,14 +232,28 @@ export const useChatStore = defineStore('chat', () => {
 
   // Send encrypted message
   const sendMessage = async (contactPublicKey, messageText) => {
-    if (!authStore.privateKey || !messageText.trim()) return null
+    console.log('[CHAT] === SENDING MESSAGE ===')
+    console.log('[CHAT] Contact pubkey:', contactPublicKey)
+    console.log('[CHAT] Contact pubkey length:', contactPublicKey.length)
+    console.log('[CHAT] Message text:', messageText)
+    console.log('[CHAT] Is connected:', isConnected.value)
+    
+    if (!authStore.privateKey || !messageText.trim()) {
+      console.log('[CHAT] Aborted: no private key or empty message')
+      return null
+    }
     
     try {
       // Derive shared secret for E2E encryption
+      console.log('[CHAT] Deriving shared secret...')
       const sharedSecret = deriveSharedSecret(authStore.privateKey, contactPublicKey)
+      console.log('[CHAT] Shared secret derived (length):', sharedSecret.length)
       
       // Encrypt message
+      console.log('[CHAT] Encrypting message...')
       const encryptedText = await encrypt(messageText, sharedSecret)
+      console.log('[CHAT] Encrypted text length:', encryptedText.length)
+      console.log('[CHAT] Encrypted text preview:', encryptedText.substring(0, 50) + '...')
       
       const now = Date.now()
       
@@ -221,11 +261,14 @@ export const useChatStore = defineStore('chat', () => {
       let eventId = null
       if (isConnected.value) {
         try {
+          console.log('[CHAT] Sending via Nostr...')
           eventId = await nostrRelay.sendMessage(authStore.privateKey, contactPublicKey, encryptedText)
-          console.log('Message sent via Nostr, event ID:', eventId)
+          console.log('[CHAT] ✓ Message sent via Nostr, event ID:', eventId)
         } catch (error) {
-          console.error('Failed to send via Nostr:', error)
+          console.error('[CHAT] ✗ Failed to send via Nostr:', error)
         }
+      } else {
+        console.log('[CHAT] ✗ Not connected to Nostr, message saved locally only')
       }
       
       const message = {
@@ -244,6 +287,7 @@ export const useChatStore = defineStore('chat', () => {
       // Save to IndexedDB
       const id = await db.messages.add(message)
       message.id = id
+      console.log('[CHAT] Message saved to DB with id:', id)
       
       // Track processed event
       if (eventId) {

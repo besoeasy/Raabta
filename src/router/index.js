@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { useChatStore } from '../stores/chat'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -19,6 +20,9 @@ const router = createRouter({
   ],
 })
 
+// Track if chat store has been initialized
+let chatInitialized = false
+
 // Navigation guard
 router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore()
@@ -26,6 +30,13 @@ router.beforeEach(async (to, from, next) => {
   // Initialize auth store if not done
   if (!authStore.isAuthenticated) {
     await authStore.init()
+  }
+  
+  // Initialize chat store when going to chat (only once)
+  if (to.meta.requiresAuth && authStore.isAuthenticated && !chatInitialized) {
+    const chatStore = useChatStore()
+    await chatStore.init()
+    chatInitialized = true
   }
   
   if (to.meta.requiresAuth && !authStore.isAuthenticated) {

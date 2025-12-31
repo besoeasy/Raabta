@@ -5,7 +5,7 @@ import { ref } from 'vue'
 // Default public relays
 const DEFAULT_RELAYS = [
   'wss://relay.damus.io',
-  'wss://nos.lol',
+  'wss://nos.lol', 
   'wss://relay.nostr.band',
   'wss://nostr.wine',
   'wss://relay.snort.social'
@@ -13,6 +13,10 @@ const DEFAULT_RELAYS = [
 
 // Custom event kind for Raabta encrypted messages
 const RAABTA_MESSAGE_KIND = 14141
+
+// Debug logger
+const debug = (...args) => console.log('[NOSTR]', ...args)
+const debugError = (...args) => console.error('[NOSTR ERROR]', ...args)
 
 // Convert between daku (66-char with prefix) and nostr (64-char raw) pubkeys
 const dakuToNostrPubkey = (dakuPubKey) => {
@@ -39,6 +43,7 @@ class NostrRelay {
     this.subscriptions = new Map()
     this.connected = ref(false)
     this.messageHandlers = []
+    debug('NostrRelay initialized with relays:', this.relays)
   }
 
   // Convert daku hex private key to nostr format
@@ -50,88 +55,133 @@ class NostrRelay {
 
   // Subscribe to messages for a public key
   async subscribe(dakuPrivateKey, onMessage) {
+    debug('=== SUBSCRIBING TO MESSAGES ===')
     const { privateKeyBytes, publicKey } = this.getNostrKeys(dakuPrivateKey)
     
-    console.log('Subscribing with nostr pubkey:', publicKey)
+    debug('My nostr pubkey (64 chars):', publicKey)
+    debug('My nostr pubkey length:', publicKey.length)
     
-    // Subscribe to messages tagged with our public key
-    const sub = this.pool.subscribeMany(
-      this.relays,
-      [
+    const filter = {
+      kinds: [RAABTA_MESSAGE_KIND],
+      '#p': [publicKey],
+      since: Math.floor(Date.now() / 1000) - 86400 * 7
+    }
+    debug('Subscription filter:', JSON.stringify(filter))
+    
+    return new Promise((resolve) => {
+      // Subscribe to messages tagged with our public key
+      const sub = this.pool.subscribeMany(
+        this.relays,
+        [filter],
         {
-          kinds: [RAABTA_MESSAGE_KIND],
-          '#p': [publicKey], // Messages addressed to us (64-char nostr format)
-          since: Math.floor(Date.now() / 1000) - 86400 * 7 // Last 7 days
-        }
-      ],
-      {
-        onevent: (event) => {
-          // Parse the encrypted message
-          try {
-            const senderNostrPubKey = event.pubkey
-            const encryptedContent = event.content
-            const timestamp = event.created_at * 1000
+          onevent: (event) => {
+            debug('=== RECEIVED EVENT ===')
+            debug('Event ID:', event.id)
+            debug('Event kind:', event.kind)
+            debug('Sender nostr pubkey:', event.pubkey)
+            debug('Tags:', JSON.stringify(event.tags))
+            debug('Content length:', event.content?.length)
+            debug('Content preview:', event.content?.substring(0, 50) + '...')
             
-            // Convert sender's nostr pubkey back to daku format for decryption
-            const senderDakuPubKey = nostrToDakuPubkey(senderNostrPubKey)
-            
-            console.log('Received message from nostr pubkey:', senderNostrPubKey)
-            console.log('Converted to daku pubkey:', senderDakuPubKey)
-            
-            onMessage({
-              from: senderDakuPubKey, // Return daku format for local storage
-              nostrPubKey: senderNostrPubKey,
-              encryptedText: encryptedContent,
-              timestamp,
-              eventId: event.id
-            })
-          } catch (error) {
-            console.error('Failed to parse nostr event:', error)
+            // Parse the encrypted message
+            try {
+              const senderNostrPubKey = event.pubkey
+              const encryptedContent = event.content
+              const timestamp = event.created_at * 1000
+              
+              // Convert sender's nostr pubkey back to daku format for decryption
+              const senderDakuPubKey = nostrToDakuPubkey(senderNostrPubKey)
+              
+              debug('Converted sender to daku pubkey:', senderDakuPubKey)
+              
+              onMessage({
+                from: senderDakuPubKey,
+                nostrPubKey: senderNostrPubKey,
+                encryptedText: encryptedContent,
+                timestamp,
+                eventId: event.id
+              })
+            } catch (error) {
+              debugError('Failed to parse nostr event:', error)
+            }
+          },
+          oneose: () => {
+            debug('Subscription EOSE - caught up with relays')
+            this.connected.value = true
+            resolve(sub) // Resolve when we've caught up
+          },
+          onclose: (reason) => {
+            debug('Subscription closed:', reason)
           }
-        },
-        oneose: () => {
-          console.log('Subscription caught up with relay')
-          this.connected.value = true
         }
-      }
-    )
+      )
 
-    this.subscriptions.set(publicKey, sub)
-    return sub
+      this.subscriptions.set(publicKey, sub)
+      debug('Subscription created and stored')
+      
+      // Timeout - resolve anyway after 5 seconds
+      setTimeout(() => {
+        if (!this.connected.value) {
+          debug('Connection timeout - resolving anyway')
+          this.connected.value = true
+          resolve(sub)
+        }
+      }, 5000)
+    })
   }
 
   // Send encrypted message via nostr
   async sendMessage(dakuPrivateKey, recipientDakuPubKey, encryptedText) {
+    debug('=== SENDING MESSAGE ===')
     const { privateKeyBytes, publicKey } = this.getNostrKeys(dakuPrivateKey)
+    
+    debug('My nostr pubkey:', publicKey)
+    debug('Recipient daku pubkey:', recipientDakuPubKey)
+    debug('Recipient daku pubkey length:', recipientDakuPubKey.length)
     
     // Convert recipient's daku pubkey to nostr format
     const recipientNostrPubKey = dakuToNostrPubkey(recipientDakuPubKey)
     
-    console.log('Sending to daku pubkey:', recipientDakuPubKey)
-    console.log('Converted to nostr pubkey:', recipientNostrPubKey)
+    debug('Recipient nostr pubkey:', recipientNostrPubKey)
+    debug('Recipient nostr pubkey length:', recipientNostrPubKey.length)
+    debug('Encrypted text length:', encryptedText.length)
 
     // Create nostr event
     const event = {
       kind: RAABTA_MESSAGE_KIND,
       created_at: Math.floor(Date.now() / 1000),
       tags: [
-        ['p', recipientNostrPubKey] // Tag recipient with 64-char nostr format
+        ['p', recipientNostrPubKey]
       ],
       content: encryptedText
     }
+    
+    debug('Event before signing:', JSON.stringify(event))
 
     // Sign and finalize
     const signedEvent = finalizeEvent(event, privateKeyBytes)
     
-    console.log('Publishing event:', signedEvent.id)
+    debug('Signed event ID:', signedEvent.id)
+    debug('Signed event pubkey:', signedEvent.pubkey)
+    debug('Signed event sig:', signedEvent.sig?.substring(0, 20) + '...')
 
     // Publish to relays
-    const results = await Promise.allSettled(
-      this.pool.publish(this.relays, signedEvent)
-    )
+    debug('Publishing to relays:', this.relays)
+    
+    const publishPromises = this.pool.publish(this.relays, signedEvent)
+    
+    const results = await Promise.allSettled(publishPromises)
+    
+    results.forEach((result, i) => {
+      if (result.status === 'fulfilled') {
+        debug(`✓ Published to ${this.relays[i]}`)
+      } else {
+        debugError(`✗ Failed ${this.relays[i]}:`, result.reason)
+      }
+    })
 
     const successful = results.filter(r => r.status === 'fulfilled').length
-    console.log(`Message published to ${successful}/${this.relays.length} relays`)
+    debug(`Published to ${successful}/${this.relays.length} relays`)
 
     return signedEvent.id
   }
