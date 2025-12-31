@@ -3,7 +3,7 @@ import Dexie from 'dexie'
 // Create Dexie database for chat app
 export const db = new Dexie('RaabtaDB')
 
-// Define schema
+// Define schema - version 2 adds file attachment support
 db.version(1).stores({
   // User identity storage
   identity: 'id, privateKey, publicKey, username, createdAt',
@@ -16,6 +16,25 @@ db.version(1).stores({
   
   // Conversation metadata
   conversations: 'contactPublicKey, lastMessageAt, unreadCount'
+})
+
+// Version 2: Add file attachment fields to messages
+db.version(2).stores({
+  // User identity storage
+  identity: 'id, privateKey, publicKey, username, createdAt',
+  
+  // Contacts storage
+  contacts: 'publicKey, username, addedAt, lastSeen',
+  
+  // Messages storage - now with file support
+  // file: { url, iv, originalName, mimeType, size }
+  messages: '++id, conversationId, from, to, timestamp, isRead, expiresAt, [conversationId+timestamp]',
+  
+  // Conversation metadata
+  conversations: 'contactPublicKey, lastMessageAt, unreadCount',
+  
+  // Settings storage for user preferences
+  settings: 'key, value'
 })
 
 // Cache expiry duration: 1 year in milliseconds

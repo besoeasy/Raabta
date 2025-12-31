@@ -45,7 +45,85 @@
               : 'mr-auto bg-white text-gray-900 rounded-bl-md shadow-sm'
           ]"
         >
-          <p class="break-words">{{ message.text }}</p>
+          <!-- File Attachment -->
+          <div v-if="message.file" class="mb-2">
+            <!-- Image Preview -->
+            <div v-if="isImage(message.file.mimeType)" class="mb-2">
+              <img 
+                v-if="fileCache[message.id]"
+                :src="fileCache[message.id]"
+                :alt="message.file.originalName"
+                class="max-w-full rounded-lg cursor-pointer"
+                @click="openFile(message)"
+              />
+              <div 
+                v-else
+                class="w-48 h-32 bg-gray-200 rounded-lg flex items-center justify-center cursor-pointer"
+                @click="loadFile(message)"
+              >
+                <span class="text-gray-500 text-sm">📷 Click to load image</span>
+              </div>
+            </div>
+            
+            <!-- Video Preview -->
+            <div v-else-if="isVideo(message.file.mimeType)" class="mb-2">
+              <video 
+                v-if="fileCache[message.id]"
+                :src="fileCache[message.id]"
+                controls
+                class="max-w-full rounded-lg"
+              />
+              <div 
+                v-else
+                class="w-48 h-32 bg-gray-200 rounded-lg flex items-center justify-center cursor-pointer"
+                @click="loadFile(message)"
+              >
+                <span class="text-gray-500 text-sm">🎬 Click to load video</span>
+              </div>
+            </div>
+            
+            <!-- Audio Preview -->
+            <div v-else-if="isAudio(message.file.mimeType)" class="mb-2">
+              <audio 
+                v-if="fileCache[message.id]"
+                :src="fileCache[message.id]"
+                controls
+                class="w-full"
+              />
+              <div 
+                v-else
+                class="w-48 h-12 bg-gray-200 rounded-lg flex items-center justify-center cursor-pointer"
+                @click="loadFile(message)"
+              >
+                <span class="text-gray-500 text-sm">🎵 Click to load audio</span>
+              </div>
+            </div>
+            
+            <!-- Other File Types -->
+            <div 
+              v-else
+              @click="downloadFileToDevice(message)"
+              class="flex items-center gap-3 p-3 bg-gray-100/50 rounded-lg cursor-pointer hover:bg-gray-100 transition"
+              :class="{ 'bg-blue-400/30 hover:bg-blue-400/40': message.isSent }"
+            >
+              <div class="text-3xl">📄</div>
+              <div class="flex-1 min-w-0">
+                <p class="font-medium truncate" :class="message.isSent ? 'text-white' : 'text-gray-900'">
+                  {{ message.file.originalName }}
+                </p>
+                <p class="text-xs" :class="message.isSent ? 'text-blue-100' : 'text-gray-500'">
+                  {{ formatFileSize(message.file.size) }}
+                </p>
+              </div>
+              <div class="text-2xl">⬇️</div>
+            </div>
+          </div>
+          
+          <!-- Message Text -->
+          <p v-if="!message.file || message.text !== `📎 ${message.file?.originalName}`" class="break-words">
+            {{ message.text }}
+          </p>
+          
           <p :class="[
             'text-xs mt-1',
             message.isSent ? 'text-blue-100' : 'text-gray-500'
@@ -64,14 +142,40 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
             </svg>
             <p class="mb-2">End-to-end encrypted</p>
-            <p class="text-sm">Messages are encrypted with your shared secret</p>
+            <p class="text-sm">Messages & files are encrypted with your shared secret</p>
           </div>
+        </div>
+      </div>
+
+      <!-- Upload Progress -->
+      <div v-if="isUploading" class="bg-blue-50 border-t border-blue-200 px-4 py-2">
+        <div class="flex items-center gap-3">
+          <div class="animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full"></div>
+          <span class="text-sm text-blue-700">Encrypting & uploading file...</span>
         </div>
       </div>
 
       <!-- Input Area -->
       <div class="bg-white border-t border-gray-200 p-4">
-        <form @submit.prevent="sendMessage" class="flex gap-3">
+        <form @submit.prevent="sendMessage" class="flex gap-2 items-end">
+          <!-- File Attachment Button -->
+          <button 
+            type="button"
+            @click="$refs.fileInput.click()"
+            class="p-2 hover:bg-gray-100 rounded-full transition text-gray-600"
+            title="Attach file"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+            </svg>
+          </button>
+          <input 
+            ref="fileInput"
+            type="file"
+            class="hidden"
+            @change="handleFileSelect"
+          />
+          
           <input 
             v-model="newMessage"
             type="text" 
@@ -80,7 +184,7 @@
           />
           <button 
             type="submit"
-            :disabled="!newMessage.trim()"
+            :disabled="!newMessage.trim() || isUploading"
             class="bg-blue-500 text-white px-4 py-2 rounded-full hover:bg-blue-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -146,14 +250,18 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, reactive } from 'vue'
 import { useChatStore } from '../stores/chat'
+import { isImageFile, isVideoFile, isAudioFile, formatFileSize } from '../services/filedrop'
 
 const chatStore = useChatStore()
 
 const newMessage = ref('')
 const showInfo = ref(false)
 const messagesContainer = ref(null)
+const fileInput = ref(null)
+const isUploading = ref(false)
+const fileCache = reactive({}) // Cache decrypted file URLs
 
 const activeContact = computed(() => {
   if (!chatStore.activeChat) return null
@@ -183,11 +291,90 @@ const formatTime = (timestamp) => {
   return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
 }
 
+const isImage = (mimeType) => isImageFile(mimeType)
+const isVideo = (mimeType) => isVideoFile(mimeType)
+const isAudio = (mimeType) => isAudioFile(mimeType)
+
 const sendMessage = async () => {
   if (!newMessage.value.trim() || !chatStore.activeChat) return
   
   await chatStore.sendMessage(chatStore.activeChat, newMessage.value.trim())
   newMessage.value = ''
+}
+
+// Handle file selection
+const handleFileSelect = async (event) => {
+  const file = event.target.files?.[0]
+  if (!file || !chatStore.activeChat) return
+  
+  // Reset input
+  event.target.value = ''
+  
+  // Check file size (max 50MB)
+  const maxSize = 50 * 1024 * 1024
+  if (file.size > maxSize) {
+    alert('File too large. Maximum size is 50MB.')
+    return
+  }
+  
+  isUploading.value = true
+  
+  try {
+    // Send file with optional caption
+    const caption = newMessage.value.trim()
+    await chatStore.sendFile(chatStore.activeChat, file, caption)
+    newMessage.value = ''
+  } catch (error) {
+    console.error('Failed to send file:', error)
+    alert('Failed to send file: ' + error.message)
+  } finally {
+    isUploading.value = false
+  }
+}
+
+// Load and decrypt file for preview
+const loadFile = async (message) => {
+  if (fileCache[message.id]) return
+  
+  try {
+    const blob = await chatStore.downloadFile(message)
+    if (blob) {
+      fileCache[message.id] = URL.createObjectURL(blob)
+    }
+  } catch (error) {
+    console.error('Failed to load file:', error)
+    alert('Failed to decrypt file: ' + error.message)
+  }
+}
+
+// Open file in new tab
+const openFile = async (message) => {
+  if (!fileCache[message.id]) {
+    await loadFile(message)
+  }
+  if (fileCache[message.id]) {
+    window.open(fileCache[message.id], '_blank')
+  }
+}
+
+// Download file to device
+const downloadFileToDevice = async (message) => {
+  try {
+    const blob = await chatStore.downloadFile(message)
+    if (blob) {
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = message.file.originalName
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    }
+  } catch (error) {
+    console.error('Failed to download file:', error)
+    alert('Failed to decrypt file: ' + error.message)
+  }
 }
 
 const copyKey = async (key) => {

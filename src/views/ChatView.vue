@@ -122,6 +122,21 @@
             </div>
           </div>
           
+          <!-- FileDrop Settings -->
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-2">FileDrop Server</label>
+            <div class="flex items-center justify-between">
+              <span class="text-sm text-gray-700 truncate flex-1">{{ currentFiledropServer }}</span>
+              <button 
+                @click="showSettings = false; showFiledropSettings = true"
+                class="px-3 py-1 text-sm text-blue-500 hover:text-blue-700 transition"
+              >
+                Configure
+              </button>
+            </div>
+            <p class="text-xs text-gray-500 mt-1">Server used for encrypted file sharing</p>
+          </div>
+          
           <!-- Logout -->
           <div class="pt-4 border-t border-gray-200">
             <button 
@@ -142,16 +157,21 @@
         </button>
       </div>
     </div>
+
+    <!-- FileDrop Settings Modal -->
+    <SettingsModal v-if="showFiledropSettings" @close="showFiledropSettings = false" />
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useChatStore } from '../stores/chat'
+import { getFiledropServer } from '../services/filedrop'
 import ChatList from '../components/ChatList.vue'
 import ChatWindow from '../components/ChatWindow.vue'
+import SettingsModal from '../components/SettingsModal.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -159,6 +179,9 @@ const chatStore = useChatStore()
 
 const showSettings = ref(false)
 const showPrivateKey = ref(false)
+const showFiledropSettings = ref(false)
+
+const currentFiledropServer = computed(() => getFiledropServer())
 
 const shortenKey = (key) => {
   if (!key) return ''

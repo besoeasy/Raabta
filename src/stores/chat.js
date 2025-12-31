@@ -4,6 +4,7 @@ import { deriveSharedSecret, encrypt, decrypt, getUsername } from 'daku'
 import { db, CACHE_DURATION, cleanupExpiredMessages } from '../db'
 import { useAuthStore } from './auth'
 import { nostrRelay } from '../services/nostr'
+import { encryptAndUpload, downloadAndDecrypt } from '../services/filedrop'
 
 export const useChatStore = defineStore('chat', () => {
   const authStore = useAuthStore()
@@ -175,9 +176,24 @@ export const useChatStore = defineStore('chat', () => {
         await addContact(senderDakuPubKey)
       }
       
+      // Check if this is a file message (JSON with type: 'file')
+      let messageText = decryptedText
+      let fileData = null
+      
+      try {
+        const parsed = JSON.parse(decryptedText)
+        if (parsed.type === 'file' && parsed.file) {
+          fileData = parsed.file
+          messageText = parsed.caption || `📎 ${parsed.file.originalName}`
+          console.log('[CHAT] ✓ This is a file message:', fileData.originalName)
+        }
+      } catch {
+        // Not JSON, regular text message
+      }
+      
       const message = {
         conversationId: senderDakuPubKey,
-        text: decryptedText,
+        text: messageText,
         encryptedText: event.encryptedText,
         from: senderDakuPubKey,
         to: authStore.publicKey,
@@ -185,7 +201,8 @@ export const useChatStore = defineStore('chat', () => {
         isSent: false,
         isRead: activeChat.value === senderDakuPubKey,
         expiresAt: event.timestamp + CACHE_DURATION,
-        eventId: event.eventId
+        eventId: event.eventId,
+        file: fileData
       }
       
       const id = await db.messages.add(message)
@@ -338,6 +355,122 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  // Send encrypted file
+  const sendFile = async (contactPublicKey, file, caption = '') => {
+    console.log('[CHAT] === SENDING FILE ===')
+    console.log('[CHAT] Contact pubkey:', contactPublicKey)
+    console.log('[CHAT] File:', file.name, 'size:', file.size, 'type:', file.type)
+    
+    if (!authStore.privateKey || !file) {
+      console.log('[CHAT] Aborted: no private key or no file')
+      return null
+    }
+    
+    try {
+      // Derive shared secret for E2E encryption
+      const sharedSecret = deriveSharedSecret(authStore.privateKey, contactPublicKey)
+      
+      // Encrypt and upload file
+      const fileData = await encryptAndUpload(file, sharedSecret)
+      console.log('[CHAT] File uploaded:', fileData)
+      
+      // Create message with file attachment
+      const messagePayload = {
+        type: 'file',
+        file: {
+          url: fileData.url,
+          iv: fileData.iv,
+          originalName: fileData.originalName,
+          mimeType: fileData.mimeType,
+          size: fileData.size
+        },
+        caption: caption || ''
+      }
+      
+      // Encrypt the message payload (contains file metadata)
+      const encryptedText = await encrypt(JSON.stringify(messagePayload), sharedSecret)
+      
+      const now = Date.now()
+      
+      // Send via Nostr relay
+      let eventId = null
+      if (isConnected.value) {
+        try {
+          console.log('[CHAT] Sending file message via Nostr...')
+          eventId = await nostrRelay.sendMessage(authStore.privateKey, contactPublicKey, encryptedText)
+          console.log('[CHAT] ✓ File message sent via Nostr, event ID:', eventId)
+        } catch (error) {
+          console.error('[CHAT] ✗ Failed to send file via Nostr:', error)
+        }
+      }
+      
+      const message = {
+        conversationId: contactPublicKey,
+        text: caption || `📎 ${fileData.originalName}`,
+        encryptedText,
+        from: authStore.publicKey,
+        to: contactPublicKey,
+        timestamp: now,
+        isSent: true,
+        isRead: true,
+        expiresAt: now + CACHE_DURATION,
+        eventId,
+        file: messagePayload.file
+      }
+      
+      // Save to IndexedDB
+      const id = await db.messages.add(message)
+      message.id = id
+      console.log('[CHAT] File message saved to DB with id:', id)
+      
+      // Track processed event
+      if (eventId) {
+        processedEvents.value.add(eventId)
+      }
+      
+      // Update local state
+      if (!messages.value[contactPublicKey]) {
+        messages.value[contactPublicKey] = []
+      }
+      messages.value[contactPublicKey].push(message)
+      
+      return message
+    } catch (error) {
+      console.error('Failed to send file:', error)
+      return null
+    }
+  }
+
+  // Download and decrypt a file from a message
+  const downloadFile = async (message) => {
+    console.log('[CHAT] === DOWNLOADING FILE ===')
+    
+    if (!message.file || !message.file.url) {
+      console.error('[CHAT] No file in message')
+      return null
+    }
+    
+    try {
+      // Get the contact's public key for deriving shared secret
+      const contactPubKey = message.isSent ? message.to : message.from
+      const sharedSecret = deriveSharedSecret(authStore.privateKey, contactPubKey)
+      
+      // Download and decrypt
+      const decryptedBlob = await downloadAndDecrypt(
+        message.file.url,
+        sharedSecret,
+        message.file.iv,
+        message.file.mimeType
+      )
+      
+      console.log('[CHAT] File decrypted successfully')
+      return decryptedBlob
+    } catch (error) {
+      console.error('[CHAT] Failed to download/decrypt file:', error)
+      return null
+    }
+  }
+
   // Receive encrypted message
   const receiveMessage = async (senderPublicKey, encryptedText) => {
     if (!authStore.privateKey) return null
@@ -466,6 +599,8 @@ export const useChatStore = defineStore('chat', () => {
     addContact,
     removeContact,
     sendMessage,
+    sendFile,
+    downloadFile,
     receiveMessage,
     markAsRead,
     setActiveChat,
