@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { deriveSharedSecret, encrypt, decrypt, getUsername } from 'daku'
 import { db, CACHE_DURATION, cleanupExpiredMessages } from '../db'
 import { useAuthStore } from './auth'
-import { nostrRelay } from '../services/nostr'
+import { peerService } from '../services/peer'
 import { encryptAndUpload, downloadAndDecrypt } from '../services/filedrop'
 
 export const useChatStore = defineStore('chat', () => {
@@ -18,11 +18,11 @@ export const useChatStore = defineStore('chat', () => {
   // Currently active chat
   const activeChat = ref(null)
   
-  // Nostr connection status
-  const isConnected = ref(false)
+  // Peer connection status
+  const isConnected = computed(() => peerService.connected.value)
   
-  // Processed event IDs to avoid duplicates
-  const processedEvents = ref(new Set())
+  // Processed message IDs to avoid duplicates
+  const processedMessages = ref(new Set())
 
   // Load data from IndexedDB and connect to Nostr
   const init = async () => {
@@ -63,22 +63,22 @@ export const useChatStore = defineStore('chat', () => {
       
       messages.value = grouped
       
-      // Connect to Nostr relays if authenticated
+      // Connect to PeerJS if authenticated
       if (authStore.privateKey) {
-        console.log('[CHAT] Connecting to Nostr...')
-        await connectNostr()
-        console.log('[CHAT] Nostr connection complete, isConnected:', isConnected.value)
+        console.log('[CHAT] Connecting to PeerJS...')
+        await connectPeer()
+        console.log('[CHAT] Peer connection complete, isConnected:', isConnected.value)
       } else {
-        console.log('[CHAT] No private key, skipping Nostr connection')
+        console.log('[CHAT] No private key, skipping Peer connection')
       }
     } catch (error) {
       console.error('[CHAT] Failed to load chat data:', error)
     }
   }
   
-  // Connect to Nostr and subscribe to messages
-  const connectNostr = async () => {
-    console.log('[CHAT] === CONNECTING TO NOSTR ===')
+  // Connect to PeerJS and subscribe to messages
+  const connectPeer = async () => {
+    console.log('[CHAT] === CONNECTING TO PEERJS ===')
     console.log('[CHAT] Private key exists:', !!authStore.privateKey)
     
     if (!authStore.privateKey) {
@@ -87,84 +87,65 @@ export const useChatStore = defineStore('chat', () => {
     }
     
     try {
-      console.log('[CHAT] Subscribing to messages (waiting for EOSE)...')
-      await nostrRelay.subscribe(authStore.privateKey, handleIncomingMessage)
-      // Use the nostr service's connected status
-      isConnected.value = nostrRelay.connected.value
-      console.log('[CHAT] ✓ Connected to Nostr relays, isConnected:', isConnected.value)
+      console.log('[CHAT] Initializing peer with public key...')
+      await peerService.init(authStore.publicKey)
+      
+      console.log('[CHAT] Subscribing to messages...')
+      peerService.subscribe(authStore.publicKey, handleIncomingMessage)
+      
+      console.log('[CHAT] ✓ Connected to PeerJS server, isConnected:', isConnected.value)
     } catch (error) {
-      console.error('[CHAT] ✗ Failed to connect to Nostr:', error)
-      isConnected.value = false
+      console.error('[CHAT] ✗ Failed to connect to PeerJS:', error)
     }
   }
   
-  // Handle incoming message from Nostr
+  // Handle incoming message from Peer
   const handleIncomingMessage = async (event) => {
     console.log('[CHAT] === INCOMING MESSAGE ===')
-    console.log('[CHAT] Event ID:', event.eventId)
-    console.log('[CHAT] From (daku pubkey):', event.from)
-    console.log('[CHAT] From (nostr pubkey):', event.nostrPubKey)
+    console.log('[CHAT] Message ID:', event.messageId)
+    console.log('[CHAT] From (pubkey):', event.from)
     console.log('[CHAT] Encrypted text length:', event.encryptedText?.length)
     
     // Skip if already processed
-    if (processedEvents.value.has(event.eventId)) {
+    if (processedMessages.value.has(event.messageId)) {
       console.log('[CHAT] Already processed, skipping')
       return
     }
     
     // Skip our own messages (we already have them locally)
-    const { publicKey: myNostrPubKey } = nostrRelay.getNostrKeys(authStore.privateKey)
-    console.log('[CHAT] My nostr pubkey:', myNostrPubKey)
-    console.log('[CHAT] Sender nostr pubkey:', event.nostrPubKey)
-    
-    if (event.nostrPubKey === myNostrPubKey) {
+    if (event.from === authStore.publicKey) {
       console.log('[CHAT] This is my own message, skipping')
       return
     }
     
     try {
-      // Try to find existing contact with this nostr pubkey
-      const existingContact = contacts.value.find(c => {
-        // Check if contact's daku pubkey (without prefix) matches sender's nostr pubkey
-        return c.publicKey.slice(2) === event.nostrPubKey
-      })
+      const senderPubKey = event.from
       
-      let senderDakuPubKey
+      // Try to find existing contact
+      let existingContact = contacts.value.find(c => c.publicKey === senderPubKey)
+      
       let decryptedText = null
       
       if (existingContact) {
-        // Use the stored daku pubkey with correct prefix
-        senderDakuPubKey = existingContact.publicKey
-        console.log('[CHAT] Found existing contact with pubkey:', senderDakuPubKey)
+        // Use the stored pubkey
+        console.log('[CHAT] Found existing contact with pubkey:', senderPubKey)
         
-        const sharedSecret = deriveSharedSecret(authStore.privateKey, senderDakuPubKey)
+        const sharedSecret = deriveSharedSecret(authStore.privateKey, senderPubKey)
         decryptedText = await decrypt(event.encryptedText, sharedSecret)
       } else {
-        // Try both prefixes (02 and 03) since we don't know the original
-        console.log('[CHAT] No existing contact, trying both prefixes...')
+        // Try to decrypt with the sender's pubkey
+        console.log('[CHAT] No existing contact, attempting decryption...')
         
-        for (const prefix of ['02', '03']) {
-          const tryPubKey = prefix + event.nostrPubKey
-          console.log('[CHAT] Trying prefix:', prefix, '-> pubkey:', tryPubKey)
-          
-          try {
-            const sharedSecret = deriveSharedSecret(authStore.privateKey, tryPubKey)
-            const result = await decrypt(event.encryptedText, sharedSecret)
-            
-            if (result) {
-              decryptedText = result
-              senderDakuPubKey = tryPubKey
-              console.log('[CHAT] ✓ Decryption successful with prefix:', prefix)
-              break
-            }
-          } catch (e) {
-            console.log('[CHAT] Prefix', prefix, 'failed:', e.message)
-          }
+        try {
+          const sharedSecret = deriveSharedSecret(authStore.privateKey, senderPubKey)
+          decryptedText = await decrypt(event.encryptedText, sharedSecret)
+        } catch (e) {
+          console.error('[CHAT] Decryption failed:', e.message)
         }
       }
       
       if (!decryptedText) {
-        console.error('[CHAT] ✗ Failed to decrypt with any prefix')
+        console.error('[CHAT] ✗ Failed to decrypt message')
         return
       }
       
@@ -172,8 +153,8 @@ export const useChatStore = defineStore('chat', () => {
       
       // Auto-add contact if not exists
       if (!existingContact) {
-        console.log('[CHAT] Adding new contact with pubkey:', senderDakuPubKey)
-        await addContact(senderDakuPubKey)
+        console.log('[CHAT] Adding new contact with pubkey:', senderPubKey)
+        await addContact(senderPubKey)
       }
       
       // Check if this is a file message (JSON with type: 'file')
@@ -192,29 +173,29 @@ export const useChatStore = defineStore('chat', () => {
       }
       
       const message = {
-        conversationId: senderDakuPubKey,
+        conversationId: senderPubKey,
         text: messageText,
         encryptedText: event.encryptedText,
-        from: senderDakuPubKey,
+        from: senderPubKey,
         to: authStore.publicKey,
         timestamp: event.timestamp,
         isSent: false,
-        isRead: activeChat.value === senderDakuPubKey,
+        isRead: activeChat.value === senderPubKey,
         expiresAt: event.timestamp + CACHE_DURATION,
-        eventId: event.eventId,
+        messageId: event.messageId,
         file: fileData
       }
       
       const id = await db.messages.add(message)
       message.id = id
       
-      processedEvents.value.add(event.eventId)
+      processedMessages.value.add(event.messageId)
       
-      if (!messages.value[senderDakuPubKey]) {
-        messages.value[senderDakuPubKey] = []
+      if (!messages.value[senderPubKey]) {
+        messages.value[senderPubKey] = []
       }
-      messages.value[senderDakuPubKey].push(message)
-      messages.value[senderDakuPubKey].sort((a, b) => a.timestamp - b.timestamp)
+      messages.value[senderPubKey].push(message)
+      messages.value[senderPubKey].sort((a, b) => a.timestamp - b.timestamp)
       
       console.log('[CHAT] ✓ Message saved and added to UI')
     } catch (error) {
@@ -222,10 +203,9 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
   
-  // Disconnect from Nostr
-  const disconnectNostr = () => {
-    nostrRelay.close()
-    isConnected.value = false
+  // Disconnect from Peer
+  const disconnectPeer = () => {
+    peerService.close()
   }
 
   // Add new contact by public key
@@ -305,18 +285,18 @@ export const useChatStore = defineStore('chat', () => {
       
       const now = Date.now()
       
-      // Send via Nostr relay
-      let eventId = null
+      // Send via PeerJS
+      let messageId = null
       if (isConnected.value) {
         try {
-          console.log('[CHAT] Sending via Nostr...')
-          eventId = await nostrRelay.sendMessage(authStore.privateKey, contactPublicKey, encryptedText)
-          console.log('[CHAT] ✓ Message sent via Nostr, event ID:', eventId)
+          console.log('[CHAT] Sending via PeerJS...')
+          messageId = await peerService.sendMessage(contactPublicKey, encryptedText)
+          console.log('[CHAT] ✓ Message sent via PeerJS, message ID:', messageId)
         } catch (error) {
-          console.error('[CHAT] ✗ Failed to send via Nostr:', error)
+          console.error('[CHAT] ✗ Failed to send via PeerJS:', error)
         }
       } else {
-        console.log('[CHAT] ✗ Not connected to Nostr, message saved locally only')
+        console.log('[CHAT] ✗ Not connected to PeerJS, message saved locally only')
       }
       
       const message = {
@@ -329,7 +309,7 @@ export const useChatStore = defineStore('chat', () => {
         isSent: true,
         isRead: true,
         expiresAt: now + CACHE_DURATION,
-        eventId
+        messageId
       }
       
       // Save to IndexedDB
@@ -337,9 +317,9 @@ export const useChatStore = defineStore('chat', () => {
       message.id = id
       console.log('[CHAT] Message saved to DB with id:', id)
       
-      // Track processed event
-      if (eventId) {
-        processedEvents.value.add(eventId)
+      // Track processed message
+      if (messageId) {
+        processedMessages.value.add(messageId)
       }
       
       // Update local state
@@ -392,15 +372,15 @@ export const useChatStore = defineStore('chat', () => {
       
       const now = Date.now()
       
-      // Send via Nostr relay
-      let eventId = null
+      // Send via PeerJS
+      let messageId = null
       if (isConnected.value) {
         try {
-          console.log('[CHAT] Sending file message via Nostr...')
-          eventId = await nostrRelay.sendMessage(authStore.privateKey, contactPublicKey, encryptedText)
-          console.log('[CHAT] ✓ File message sent via Nostr, event ID:', eventId)
+          console.log('[CHAT] Sending file message via PeerJS...')
+          messageId = await peerService.sendMessage(contactPublicKey, encryptedText)
+          console.log('[CHAT] ✓ File message sent via PeerJS, message ID:', messageId)
         } catch (error) {
-          console.error('[CHAT] ✗ Failed to send file via Nostr:', error)
+          console.error('[CHAT] ✗ Failed to send file via PeerJS:', error)
         }
       }
       
@@ -414,7 +394,7 @@ export const useChatStore = defineStore('chat', () => {
         isSent: true,
         isRead: true,
         expiresAt: now + CACHE_DURATION,
-        eventId,
+        messageId,
         file: messagePayload.file
       }
       
@@ -423,9 +403,9 @@ export const useChatStore = defineStore('chat', () => {
       message.id = id
       console.log('[CHAT] File message saved to DB with id:', id)
       
-      // Track processed event
-      if (eventId) {
-        processedEvents.value.add(eventId)
+      // Track processed message
+      if (messageId) {
+        processedMessages.value.add(messageId)
       }
       
       // Update local state
@@ -594,8 +574,8 @@ export const useChatStore = defineStore('chat', () => {
     totalUnread,
     isConnected,
     init,
-    connectNostr,
-    disconnectNostr,
+    connectPeer,
+    disconnectPeer,
     addContact,
     removeContact,
     sendMessage,

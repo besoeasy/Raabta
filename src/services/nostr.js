@@ -8,7 +8,6 @@ const DEFAULT_RELAYS = [
   'wss://nos.lol',
   'wss://relay.snort.social',
   'wss://nostr.mom',
-  'wss://relay.nostr.bg'
 ]
 
 // Custom event kind for Raabta encrypted messages
@@ -57,20 +56,29 @@ class NostrRelay {
   async subscribe(dakuPrivateKey, onMessage) {
     debug('=== SUBSCRIBING TO MESSAGES ===')
     const { privateKeyBytes, publicKey } = this.getNostrKeys(dakuPrivateKey)
-    
+
     debug('My nostr pubkey (64 chars):', publicKey)
     debug('My nostr pubkey length:', publicKey.length)
-    
+
     const filter = {
       kinds: [RAABTA_MESSAGE_KIND],
       '#p': [publicKey],
       since: Math.floor(Date.now() / 1000) - 86400 * 7
     }
     debug('Subscription filter:', JSON.stringify(filter))
-    
-    return new Promise((resolve) => {
+
+    return new Promise(async (resolve) => {
       // Subscribe to messages tagged with our public key
-      const sub = this.pool.subscribeMany(
+      debug('Creating subscription with pool:', !!this.pool)
+      debug('Relays:', this.relays)
+      debug('Filter:', JSON.stringify(filter))
+      
+      let eoseCount = 0
+      const totalRelays = this.relays.length
+      
+      // Use subscribe (single subscription) instead of subscribeMany
+      // This seems to work more reliably with nostr-tools
+      const sub = this.pool.subscribe(
         this.relays,
         [filter],
         {
@@ -82,6 +90,7 @@ class NostrRelay {
             debug('Tags:', JSON.stringify(event.tags))
             debug('Content length:', event.content?.length)
             debug('Content preview:', event.content?.substring(0, 50) + '...')
+            debug('Callback function exists:', !!onMessage)
             
             // Parse the encrypted message
             try {
@@ -93,6 +102,7 @@ class NostrRelay {
               const senderDakuPubKey = nostrToDakuPubkey(senderNostrPubKey)
               
               debug('Converted sender to daku pubkey:', senderDakuPubKey)
+              debug('Calling onMessage callback...')
               
               onMessage({
                 from: senderDakuPubKey,
@@ -101,25 +111,49 @@ class NostrRelay {
                 timestamp,
                 eventId: event.id
               })
+              
+              debug('✓ onMessage callback completed')
             } catch (error) {
               debugError('Failed to parse nostr event:', error)
             }
           },
           oneose: () => {
-            debug('Subscription EOSE - caught up with relays')
-            this.connected.value = true
-            resolve(sub) // Resolve when we've caught up
+            eoseCount++
+            debug(`Subscription EOSE - ${eoseCount}/${totalRelays} relays caught up`)
+            
+            if (eoseCount >= totalRelays || eoseCount >= 2) {
+              debug('Subscription is active, will continue receiving new events...')
+              this.connected.value = true
+              resolve(sub)
+            }
           },
           onclose: (reason) => {
-            debug('Subscription closed:', reason)
+            debugError('Subscription closed:', reason)
+            this.connected.value = false
           }
         }
       )
 
       this.subscriptions.set(publicKey, sub)
-      debug('Subscription created and stored')
+      debug('Subscription created and stored, sub exists:', !!sub)
       
-      // Timeout - resolve anyway after 5 seconds
+      // Diagnostic: manually query for recent events to test if relays have them
+      setTimeout(async () => {
+        debug('🔍 Diagnostic: Manually querying for any recent events...')
+        const testEvents = await this.pool.querySync(this.relays, {
+          kinds: [RAABTA_MESSAGE_KIND],
+          '#p': [publicKey],
+          limit: 5
+        })
+        debug('📊 Found', testEvents.length, 'recent events in manual query')
+        if (testEvents.length > 0) {
+          debug('⚠️  Events exist but subscription is not receiving them!')
+          testEvents.forEach(e => {
+            debug('- Event:', e.id.substring(0, 16) + '...', 'at', new Date(e.created_at * 1000).toISOString())
+          })
+        }
+      }, 3000)
+      
       setTimeout(() => {
         if (!this.connected.value) {
           debug('Connection timeout - resolving anyway')
@@ -134,14 +168,14 @@ class NostrRelay {
   async sendMessage(dakuPrivateKey, recipientDakuPubKey, encryptedText) {
     debug('=== SENDING MESSAGE ===')
     const { privateKeyBytes, publicKey } = this.getNostrKeys(dakuPrivateKey)
-    
+
     debug('My nostr pubkey:', publicKey)
     debug('Recipient daku pubkey:', recipientDakuPubKey)
     debug('Recipient daku pubkey length:', recipientDakuPubKey.length)
-    
+
     // Convert recipient's daku pubkey to nostr format
     const recipientNostrPubKey = dakuToNostrPubkey(recipientDakuPubKey)
-    
+
     debug('Recipient nostr pubkey:', recipientNostrPubKey)
     debug('Recipient nostr pubkey length:', recipientNostrPubKey.length)
     debug('Encrypted text length:', encryptedText.length)
@@ -155,23 +189,23 @@ class NostrRelay {
       ],
       content: encryptedText
     }
-    
+
     debug('Event before signing:', JSON.stringify(event))
 
     // Sign and finalize
     const signedEvent = finalizeEvent(event, privateKeyBytes)
-    
+
     debug('Signed event ID:', signedEvent.id)
     debug('Signed event pubkey:', signedEvent.pubkey)
     debug('Signed event sig:', signedEvent.sig?.substring(0, 20) + '...')
 
     // Publish to relays
     debug('Publishing to relays:', this.relays)
-    
+
     const publishPromises = this.pool.publish(this.relays, signedEvent)
-    
+
     const results = await Promise.allSettled(publishPromises)
-    
+
     results.forEach((result, i) => {
       if (result.status === 'fulfilled') {
         debug(`✓ Published to ${this.relays[i]}`)
@@ -190,7 +224,7 @@ class NostrRelay {
   async fetchHistory(dakuPrivateKey, contactDakuPubKey, since = 0) {
     const { publicKey } = this.getNostrKeys(dakuPrivateKey)
     const contactNostrPubKey = dakuToNostrPubkey(contactDakuPubKey)
-    
+
     const events = await this.pool.querySync(this.relays, [
       {
         kinds: [RAABTA_MESSAGE_KIND],
