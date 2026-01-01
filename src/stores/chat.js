@@ -20,24 +20,27 @@ const generateMessageId = async (text, timestamp, from, to) => {
 
 export const useChatStore = defineStore('chat', () => {
   const authStore = useAuthStore()
-  
+
   // Contacts list
   const contacts = ref([])
-  
+
   // Messages indexed by contact public key
   const messages = ref({})
-  
+
   // Currently active chat
   const activeChat = ref(null)
-  
+
   // Sidebar visibility
   const sidebarVisible = ref(true)
-  
+
   // Peer connection status
   const isConnected = computed(() => peerService.connected.value)
-  
+
   // Processed message IDs to avoid duplicates
   const processedMessages = ref(new Set())
+
+  // Processed event IDs to avoid duplicates  
+  const processedEvents = ref(new Set())
 
   // Call state
   const incomingCall = ref(null) // { from, call, callType }
@@ -49,22 +52,22 @@ export const useChatStore = defineStore('chat', () => {
     console.log('[CHAT] === INITIALIZING CHAT STORE ===')
     console.log('[CHAT] Auth store private key exists:', !!authStore.privateKey)
     console.log('[CHAT] Auth store public key:', authStore.publicKey)
-    
+
     try {
       // Clean expired messages
       await cleanupExpiredMessages()
       console.log('[CHAT] Cleaned expired messages')
-      
+
       // Load contacts
       contacts.value = await db.contacts.toArray()
       console.log('[CHAT] Loaded contacts:', contacts.value.length)
-      
+
       // Load all messages grouped by conversation
       const allMessages = await db.messages.toArray()
       console.log('[CHAT] Loaded messages:', allMessages.length)
-      
+
       const grouped = {}
-      
+
       for (const msg of allMessages) {
         if (!grouped[msg.conversationId]) {
           grouped[msg.conversationId] = []
@@ -75,14 +78,14 @@ export const useChatStore = defineStore('chat', () => {
           processedEvents.value.add(msg.eventId)
         }
       }
-      
+
       // Sort messages by timestamp
       for (const key in grouped) {
         grouped[key].sort((a, b) => a.timestamp - b.timestamp)
       }
-      
+
       messages.value = grouped
-      
+
       // Connect to PeerJS if authenticated
       if (authStore.privateKey) {
         console.log('[CHAT] Connecting to PeerJS...')
@@ -95,36 +98,36 @@ export const useChatStore = defineStore('chat', () => {
       console.error('[CHAT] Failed to load chat data:', error)
     }
   }
-  
+
   // Connect to PeerJS and subscribe to messages
   const connectPeer = async () => {
     console.log('[CHAT] === CONNECTING TO PEERJS ===')
     console.log('[CHAT] Private key exists:', !!authStore.privateKey)
-    
+
     if (!authStore.privateKey) {
       console.log('[CHAT] No private key, aborting')
       return
     }
-    
+
     try {
       console.log('[CHAT] Initializing peer with public key...')
       await peerService.init(authStore.publicKey)
-      
+
       console.log('[CHAT] Subscribing to messages...')
       peerService.subscribe(authStore.publicKey, handleIncomingMessage)
-      
+
       console.log('[CHAT] Subscribing to P2P file transfers...')
       peerService.subscribeFiles(handleIncomingFile)
-      
+
       console.log('[CHAT] Subscribing to calls...')
       peerService.subscribeCalls(handleIncomingCall)
-      
+
       console.log('[CHAT] ✓ Connected to PeerJS server, isConnected:', isConnected.value)
     } catch (error) {
       console.error('[CHAT] ✗ Failed to connect to PeerJS:', error)
     }
   }
-  
+
   // Handle incoming message from Peer
   const handleIncomingMessage = async (event) => {
     // Handle delete message
@@ -132,15 +135,15 @@ export const useChatStore = defineStore('chat', () => {
       console.log('[CHAT] === DELETE MESSAGE REQUEST ===')
       console.log('[CHAT] Message Hash:', event.messageHash)
       console.log('[CHAT] From:', event.from)
-      
+
       try {
         // Find and delete from database by messageHash
         const messagesToDelete = await db.messages.where('messageHash').equals(event.messageHash).toArray()
         console.log('[CHAT] Found messages to delete:', messagesToDelete.length)
-        
+
         if (messagesToDelete.length > 0) {
           await db.messages.where('messageHash').equals(event.messageHash).delete()
-          
+
           // Delete from local state
           const contactKey = event.from
           if (messages.value[contactKey]) {
@@ -148,7 +151,7 @@ export const useChatStore = defineStore('chat', () => {
               msg => msg.messageHash !== event.messageHash
             )
           }
-          
+
           console.log('[CHAT] ✓ Message deleted')
         } else {
           console.log('[CHAT] Message not found in database')
@@ -158,42 +161,42 @@ export const useChatStore = defineStore('chat', () => {
       }
       return
     }
-    
+
     console.log('[CHAT] === INCOMING MESSAGE ===')
     console.log('[CHAT] Message ID:', event.messageId)
     console.log('[CHAT] From (pubkey):', event.from)
     console.log('[CHAT] Encrypted text length:', event.encryptedText?.length)
-    
+
     // Skip if already processed
     if (processedMessages.value.has(event.messageId)) {
       console.log('[CHAT] Already processed, skipping')
       return
     }
-    
+
     // Skip our own messages (we already have them locally)
     if (event.from === authStore.publicKey) {
       console.log('[CHAT] This is my own message, skipping')
       return
     }
-    
+
     try {
       const senderPubKey = event.from
-      
+
       // Try to find existing contact
       let existingContact = contacts.value.find(c => c.publicKey === senderPubKey)
-      
+
       let decryptedText = null
-      
+
       if (existingContact) {
         // Use the stored pubkey
         console.log('[CHAT] Found existing contact with pubkey:', senderPubKey)
-        
+
         const sharedSecret = deriveSharedSecret(authStore.privateKey, senderPubKey)
         decryptedText = await decrypt(event.encryptedText, sharedSecret)
       } else {
         // Try to decrypt with the sender's pubkey
         console.log('[CHAT] No existing contact, attempting decryption...')
-        
+
         try {
           const sharedSecret = deriveSharedSecret(authStore.privateKey, senderPubKey)
           decryptedText = await decrypt(event.encryptedText, sharedSecret)
@@ -201,24 +204,24 @@ export const useChatStore = defineStore('chat', () => {
           console.error('[CHAT] Decryption failed:', e.message)
         }
       }
-      
+
       if (!decryptedText) {
         console.error('[CHAT] ✗ Failed to decrypt message')
         return
       }
-      
+
       console.log('[CHAT] ✓ Decrypted:', decryptedText)
-      
+
       // Auto-add contact if not exists
       if (!existingContact) {
         console.log('[CHAT] Adding new contact with pubkey:', senderPubKey)
         await addContact(senderPubKey)
       }
-      
+
       // Check if this is a file message (JSON with type: 'file')
       let messageText = decryptedText
       let fileData = null
-      
+
       try {
         const parsed = JSON.parse(decryptedText)
         if (parsed.type === 'file' && parsed.file) {
@@ -229,7 +232,7 @@ export const useChatStore = defineStore('chat', () => {
       } catch {
         // Not JSON, regular text message
       }
-      
+
       // Generate unique message hash
       const messageHash = await generateMessageId(
         messageText,
@@ -237,7 +240,7 @@ export const useChatStore = defineStore('chat', () => {
         senderPubKey,
         authStore.publicKey
       )
-      
+
       const message = {
         conversationId: senderPubKey,
         text: messageText,
@@ -252,18 +255,18 @@ export const useChatStore = defineStore('chat', () => {
         messageHash: messageHash,
         file: fileData
       }
-      
+
       const id = await db.messages.add(message)
       message.id = id
-      
+
       processedMessages.value.add(event.messageId)
-      
+
       if (!messages.value[senderPubKey]) {
         messages.value[senderPubKey] = []
       }
       messages.value[senderPubKey].push(message)
       messages.value[senderPubKey].sort((a, b) => a.timestamp - b.timestamp)
-      
+
       console.log('[CHAT] ✓ Message saved and added to UI')
     } catch (error) {
       console.error('[CHAT] ✗ Failed to process incoming message:', error)
@@ -274,22 +277,22 @@ export const useChatStore = defineStore('chat', () => {
   const handleIncomingFile = async (event) => {
     console.log('[CHAT] === INCOMING P2P FILE ===')
     console.log('[CHAT] Event type:', event.type)
-    
+
     if (event.type === 'progress') {
       console.log(`[CHAT] Receiving ${event.fileName}: ${event.progress.toFixed(1)}%`)
       // Could show notification here
     } else if (event.type === 'complete') {
       console.log('[CHAT] File received:', event.fileName)
-      
+
       try {
         const senderPubKey = event.from
-        
+
         // Auto-add contact if not exists
         let existingContact = contacts.value.find(c => c.publicKey === senderPubKey)
         if (!existingContact) {
           await addContact(senderPubKey)
         }
-        
+
         // Generate unique message hash
         const messageHash = await generateMessageId(
           `📎 ${event.fileName}`,
@@ -297,7 +300,7 @@ export const useChatStore = defineStore('chat', () => {
           senderPubKey,
           authStore.publicKey
         )
-        
+
         // Store file Blob in files table
         const fileId = await db.files.add({
           messageHash,
@@ -308,7 +311,7 @@ export const useChatStore = defineStore('chat', () => {
           timestamp: event.timestamp,
           conversationId: senderPubKey
         })
-        
+
         const message = {
           conversationId: senderPubKey,
           text: `📎 ${event.fileName}`,
@@ -327,29 +330,29 @@ export const useChatStore = defineStore('chat', () => {
             isP2P: true
           }
         }
-        
+
         const id = await db.messages.add(message)
         message.id = id
-        
+
         if (!messages.value[senderPubKey]) {
           messages.value[senderPubKey] = []
         }
         messages.value[senderPubKey].push(message)
         messages.value[senderPubKey].sort((a, b) => a.timestamp - b.timestamp)
-        
+
         console.log('[CHAT] ✓ P2P file saved and added to UI')
       } catch (error) {
         console.error('[CHAT] ✗ Failed to process P2P file:', error)
       }
     }
   }
-  
+
   // Handle incoming call
   const handleIncomingCall = (event) => {
     console.log('[CHAT] === INCOMING CALL ===')
     console.log('[CHAT] Call type:', event.callType)
     console.log('[CHAT] From:', event.from)
-    
+
     if (event.type === 'incoming') {
       // Store incoming call info
       incomingCall.value = {
@@ -358,23 +361,23 @@ export const useChatStore = defineStore('chat', () => {
         callType: event.callType
       }
       callStatus.value = 'ringing'
-      
+
       // Play ringtone (optional)
       // const audio = new Audio('/ringtone.mp3')
       // audio.loop = true
       // audio.play()
     }
   }
-  
+
   // Make an outgoing call (video or audio)
   const makeCall = async (recipientPubKey, callType = 'video') => {
     try {
       console.log('[CHAT] === MAKING CALL ===')
       console.log('[CHAT] Recipient:', recipientPubKey)
       console.log('[CHAT] Call type:', callType)
-      
+
       callStatus.value = 'connecting'
-      
+
       // Get user media
       const constraints = {
         audio: true,
@@ -383,15 +386,15 @@ export const useChatStore = defineStore('chat', () => {
           height: { ideal: 720 }
         } : false
       }
-      
+
       const localStream = await navigator.mediaDevices.getUserMedia(constraints)
       console.log('[CHAT] Got local stream')
-      
+
       // Make call through peer service
       const { call, remoteStream } = await peerService.makeCall(recipientPubKey, localStream, callType)
-      
+
       console.log('[CHAT] ✓ Call connected')
-      
+
       // Store active call info
       activeCall.value = {
         pubKey: recipientPubKey,
@@ -401,13 +404,13 @@ export const useChatStore = defineStore('chat', () => {
         remoteStream
       }
       callStatus.value = 'connected'
-      
+
       // Listen for call end
       call.on('close', () => {
         console.log('[CHAT] Call closed')
         endActiveCall()
       })
-      
+
       return { localStream, remoteStream }
     } catch (error) {
       console.error('[CHAT] ✗ Failed to make call:', error)
@@ -415,19 +418,19 @@ export const useChatStore = defineStore('chat', () => {
       throw error
     }
   }
-  
+
   // Answer incoming call
   const answerCall = async () => {
     try {
       if (!incomingCall.value) {
         throw new Error('No incoming call')
       }
-      
+
       console.log('[CHAT] === ANSWERING CALL ===')
       console.log('[CHAT] Call type:', incomingCall.value.callType)
-      
+
       callStatus.value = 'connecting'
-      
+
       // Get user media
       const constraints = {
         audio: true,
@@ -436,15 +439,15 @@ export const useChatStore = defineStore('chat', () => {
           height: { ideal: 720 }
         } : false
       }
-      
+
       const localStream = await navigator.mediaDevices.getUserMedia(constraints)
       console.log('[CHAT] Got local stream')
-      
+
       // Answer call through peer service
       const { call, remoteStream } = await peerService.answerCall(incomingCall.value.call, localStream)
-      
+
       console.log('[CHAT] ✓ Call answered')
-      
+
       // Store active call info
       activeCall.value = {
         pubKey: incomingCall.value.from,
@@ -454,16 +457,16 @@ export const useChatStore = defineStore('chat', () => {
         remoteStream
       }
       callStatus.value = 'connected'
-      
+
       // Clear incoming call
       incomingCall.value = null
-      
+
       // Listen for call end
       call.on('close', () => {
         console.log('[CHAT] Call closed')
         endActiveCall()
       })
-      
+
       return { localStream, remoteStream }
     } catch (error) {
       console.error('[CHAT] ✗ Failed to answer call:', error)
@@ -472,36 +475,36 @@ export const useChatStore = defineStore('chat', () => {
       throw error
     }
   }
-  
+
   // Decline incoming call
   const declineCall = () => {
     console.log('[CHAT] === DECLINING CALL ===')
-    
+
     if (incomingCall.value) {
       incomingCall.value.call.close()
       incomingCall.value = null
     }
-    
+
     callStatus.value = 'idle'
   }
-  
+
   // End active call
   const endCall = () => {
     console.log('[CHAT] === ENDING CALL ===')
-    
+
     if (activeCall.value) {
       // Stop local stream tracks
       if (activeCall.value.localStream) {
         activeCall.value.localStream.getTracks().forEach(track => track.stop())
       }
-      
+
       // Close call through peer service
       peerService.endCall(activeCall.value.pubKey)
-      
+
       endActiveCall()
     }
   }
-  
+
   // Clean up active call
   const endActiveCall = () => {
     if (activeCall.value) {
@@ -512,13 +515,13 @@ export const useChatStore = defineStore('chat', () => {
       if (activeCall.value.remoteStream) {
         activeCall.value.remoteStream.getTracks().forEach(track => track.stop())
       }
-      
+
       activeCall.value = null
     }
-    
+
     callStatus.value = 'idle'
   }
-  
+
   // Disconnect from Peer
   const disconnectPeer = () => {
     peerService.close()
@@ -529,7 +532,7 @@ export const useChatStore = defineStore('chat', () => {
     if (!publicKey || contacts.value.find(c => c.publicKey === publicKey)) {
       return false
     }
-    
+
     try {
       const username = getUsername(publicKey)
       const contact = {
@@ -538,15 +541,15 @@ export const useChatStore = defineStore('chat', () => {
         addedAt: Date.now(),
         lastSeen: Date.now()
       }
-      
+
       await db.contacts.put(contact)
       contacts.value.push(contact)
-      
+
       // Initialize empty messages array
       if (!messages.value[publicKey]) {
         messages.value[publicKey] = []
       }
-      
+
       return true
     } catch (error) {
       console.error('Failed to add contact:', error)
@@ -559,14 +562,14 @@ export const useChatStore = defineStore('chat', () => {
     try {
       await db.contacts.delete(publicKey)
       await db.messages.where('conversationId').equals(publicKey).delete()
-      
+
       contacts.value = contacts.value.filter(c => c.publicKey !== publicKey)
       delete messages.value[publicKey]
-      
+
       if (activeChat.value === publicKey) {
         activeChat.value = null
       }
-      
+
       return true
     } catch (error) {
       console.error('Failed to remove contact:', error)
@@ -581,26 +584,26 @@ export const useChatStore = defineStore('chat', () => {
     console.log('[CHAT] Contact pubkey length:', contactPublicKey.length)
     console.log('[CHAT] Message text:', messageText)
     console.log('[CHAT] Is connected:', isConnected.value)
-    
+
     if (!authStore.privateKey || !messageText.trim()) {
       console.log('[CHAT] Aborted: no private key or empty message')
       return null
     }
-    
+
     try {
       // Derive shared secret for E2E encryption
       console.log('[CHAT] Deriving shared secret...')
       const sharedSecret = deriveSharedSecret(authStore.privateKey, contactPublicKey)
       console.log('[CHAT] Shared secret derived (length):', sharedSecret.length)
-      
+
       // Encrypt message
       console.log('[CHAT] Encrypting message...')
       const encryptedText = await encrypt(messageText, sharedSecret)
       console.log('[CHAT] Encrypted text length:', encryptedText.length)
       console.log('[CHAT] Encrypted text preview:', encryptedText.substring(0, 50) + '...')
-      
+
       const now = Date.now()
-      
+
       // Generate unique message hash
       const messageHash = await generateMessageId(
         messageText,
@@ -608,7 +611,7 @@ export const useChatStore = defineStore('chat', () => {
         authStore.publicKey,
         contactPublicKey
       )
-      
+
       // Send via PeerJS
       let messageId = null
       if (isConnected.value) {
@@ -622,7 +625,7 @@ export const useChatStore = defineStore('chat', () => {
       } else {
         console.log('[CHAT] ✗ Not connected to PeerJS, message saved locally only')
       }
-      
+
       const message = {
         conversationId: contactPublicKey,
         text: messageText,
@@ -636,23 +639,23 @@ export const useChatStore = defineStore('chat', () => {
         messageId,
         messageHash
       }
-      
+
       // Save to IndexedDB
       const id = await db.messages.add(message)
       message.id = id
       console.log('[CHAT] Message saved to DB with id:', id)
-      
+
       // Track processed message
       if (messageId) {
         processedMessages.value.add(messageId)
       }
-      
+
       // Update local state
       if (!messages.value[contactPublicKey]) {
         messages.value[contactPublicKey] = []
       }
       messages.value[contactPublicKey].push(message)
-      
+
       return message
     } catch (error) {
       console.error('Failed to send message:', error)
@@ -665,20 +668,20 @@ export const useChatStore = defineStore('chat', () => {
     console.log('[CHAT] === SENDING FILE ===')
     console.log('[CHAT] Contact pubkey:', contactPublicKey)
     console.log('[CHAT] File:', file.name, 'size:', file.size, 'type:', file.type)
-    
+
     if (!authStore.privateKey || !file) {
       console.log('[CHAT] Aborted: no private key or no file')
       return null
     }
-    
+
     try {
       // Derive shared secret for E2E encryption
       const sharedSecret = deriveSharedSecret(authStore.privateKey, contactPublicKey)
-      
+
       // Encrypt and upload file
       const fileData = await encryptAndUpload(file, sharedSecret)
       console.log('[CHAT] File uploaded:', fileData)
-      
+
       // Create message with file attachment
       const messagePayload = {
         type: 'file',
@@ -691,12 +694,12 @@ export const useChatStore = defineStore('chat', () => {
         },
         caption: caption || ''
       }
-      
+
       // Encrypt the message payload (contains file metadata)
       const encryptedText = await encrypt(JSON.stringify(messagePayload), sharedSecret)
-      
+
       const now = Date.now()
-      
+
       // Generate unique message hash
       const messageHash = await generateMessageId(
         caption || `📎 ${fileData.originalName}`,
@@ -704,7 +707,7 @@ export const useChatStore = defineStore('chat', () => {
         authStore.publicKey,
         contactPublicKey
       )
-      
+
       // Send via PeerJS
       let messageId = null
       if (isConnected.value) {
@@ -716,7 +719,7 @@ export const useChatStore = defineStore('chat', () => {
           console.error('[CHAT] ✗ Failed to send file via PeerJS:', error)
         }
       }
-      
+
       const message = {
         conversationId: contactPublicKey,
         text: caption || `📎 ${fileData.originalName}`,
@@ -731,23 +734,23 @@ export const useChatStore = defineStore('chat', () => {
         messageHash,
         file: messagePayload.file
       }
-      
+
       // Save to IndexedDB
       const id = await db.messages.add(message)
       message.id = id
       console.log('[CHAT] File message saved to DB with id:', id)
-      
+
       // Track processed message
       if (messageId) {
         processedMessages.value.add(messageId)
       }
-      
+
       // Update local state
       if (!messages.value[contactPublicKey]) {
         messages.value[contactPublicKey] = []
       }
       messages.value[contactPublicKey].push(message)
-      
+
       return message
     } catch (error) {
       console.error('Failed to send file:', error)
@@ -760,17 +763,17 @@ export const useChatStore = defineStore('chat', () => {
     console.log('[CHAT] === DELETING MESSAGE ===')
     console.log('[CHAT] Message Hash:', messageHash)
     console.log('[CHAT] Contact:', contactPublicKey)
-    
+
     if (!messageHash) {
       console.error('[CHAT] No message hash provided')
       return false
     }
-    
+
     try {
       // Delete from database
       const deleted = await db.messages.where('messageHash').equals(messageHash).delete()
       console.log('[CHAT] Deleted from DB:', deleted, 'records')
-      
+
       // Delete from local state
       if (messages.value[contactPublicKey]) {
         const beforeLength = messages.value[contactPublicKey].length
@@ -779,7 +782,7 @@ export const useChatStore = defineStore('chat', () => {
         )
         console.log('[CHAT] Removed from state:', beforeLength - messages.value[contactPublicKey].length, 'messages')
       }
-      
+
       // Send delete instruction to peer if connected
       if (isConnected.value) {
         try {
@@ -791,7 +794,7 @@ export const useChatStore = defineStore('chat', () => {
       } else {
         console.log('[CHAT] Not connected - delete will sync when online')
       }
-      
+
       console.log('[CHAT] ✓ Message deleted locally')
       return true
     } catch (error) {
@@ -805,23 +808,23 @@ export const useChatStore = defineStore('chat', () => {
     console.log('[CHAT] === SENDING FILE P2P ===')
     console.log('[CHAT] Contact pubkey:', contactPublicKey)
     console.log('[CHAT] File:', file.name, 'size:', file.size)
-    
+
     if (!authStore.privateKey || !file) {
       console.log('[CHAT] Aborted: no private key or no file')
       return null
     }
-    
+
     if (!isConnected.value) {
       throw new Error('Not connected to peer network')
     }
-    
+
     try {
       // Send file via P2P
       const transferId = await peerService.sendFileP2P(contactPublicKey, file, onProgress)
       console.log('[CHAT] File sent P2P, transfer ID:', transferId)
-      
+
       const now = Date.now()
-      
+
       // Generate unique message hash
       const messageHash = await generateMessageId(
         `📎 ${file.name}`,
@@ -829,7 +832,7 @@ export const useChatStore = defineStore('chat', () => {
         authStore.publicKey,
         contactPublicKey
       )
-      
+
       // Store file Blob in files table
       const fileId = await db.files.add({
         messageHash,
@@ -840,7 +843,7 @@ export const useChatStore = defineStore('chat', () => {
         timestamp: now,
         conversationId: contactPublicKey
       })
-      
+
       const message = {
         conversationId: contactPublicKey,
         text: `📎 ${file.name}`,
@@ -859,18 +862,18 @@ export const useChatStore = defineStore('chat', () => {
           isP2P: true
         }
       }
-      
+
       // Save to IndexedDB
       const id = await db.messages.add(message)
       message.id = id
       console.log('[CHAT] P2P file message saved to DB with id:', id)
-      
+
       // Update local state
       if (!messages.value[contactPublicKey]) {
         messages.value[contactPublicKey] = []
       }
       messages.value[contactPublicKey].push(message)
-      
+
       return message
     } catch (error) {
       console.error('Failed to send file P2P:', error)
@@ -881,7 +884,7 @@ export const useChatStore = defineStore('chat', () => {
   // Download and decrypt a file from a message
   const downloadFile = async (message) => {
     console.log('[CHAT] === DOWNLOADING FILE ===')
-    
+
     // Check if file is stored in database
     if (message.fileId) {
       const storedFile = await db.files.get(message.fileId)
@@ -890,17 +893,17 @@ export const useChatStore = defineStore('chat', () => {
         return storedFile.blob
       }
     }
-    
+
     if (!message.file || !message.file.url) {
       console.error('[CHAT] No file in message')
       return null
     }
-    
+
     try {
       // Get the contact's public key for deriving shared secret
       const contactPubKey = message.isSent ? message.to : message.from
       const sharedSecret = deriveSharedSecret(authStore.privateKey, contactPubKey)
-      
+
       // Download and decrypt
       const decryptedBlob = await downloadAndDecrypt(
         message.file.url,
@@ -908,7 +911,7 @@ export const useChatStore = defineStore('chat', () => {
         message.file.iv,
         message.file.mimeType
       )
-      
+
       // Store in database for future use
       if (decryptedBlob && message.messageHash) {
         const fileId = await db.files.add({
@@ -920,11 +923,11 @@ export const useChatStore = defineStore('chat', () => {
           timestamp: message.timestamp,
           conversationId: message.conversationId
         })
-        
+
         // Update message with fileId
         await db.messages.update(message.id, { fileId })
       }
-      
+
       console.log('[CHAT] File decrypted and cached successfully')
       return decryptedBlob
     } catch (error) {
@@ -936,19 +939,19 @@ export const useChatStore = defineStore('chat', () => {
   // Receive encrypted message
   const receiveMessage = async (senderPublicKey, encryptedText) => {
     if (!authStore.privateKey) return null
-    
+
     try {
       // Derive shared secret
       const sharedSecret = deriveSharedSecret(authStore.privateKey, senderPublicKey)
-      
+
       // Decrypt message
       const decryptedText = await decrypt(encryptedText, sharedSecret)
-      
+
       if (!decryptedText) {
         console.error('Failed to decrypt message')
         return null
       }
-      
+
       const now = Date.now()
       const message = {
         conversationId: senderPublicKey,
@@ -961,22 +964,22 @@ export const useChatStore = defineStore('chat', () => {
         isRead: activeChat.value === senderPublicKey,
         expiresAt: now + CACHE_DURATION // Cache for 1 year
       }
-      
+
       // Auto-add contact if not exists
       if (!contacts.value.find(c => c.publicKey === senderPublicKey)) {
         await addContact(senderPublicKey)
       }
-      
+
       // Save to IndexedDB
       const id = await db.messages.add(message)
       message.id = id
-      
+
       // Update local state
       if (!messages.value[senderPublicKey]) {
         messages.value[senderPublicKey] = []
       }
       messages.value[senderPublicKey].push(message)
-      
+
       return message
     } catch (error) {
       console.error('Failed to receive message:', error)
@@ -990,11 +993,11 @@ export const useChatStore = defineStore('chat', () => {
     const unreadIds = msgs
       .filter(m => m.from === contactPublicKey && !m.isRead)
       .map(m => m.id)
-    
+
     if (unreadIds.length > 0) {
       // Update in IndexedDB
       await db.messages.where('id').anyOf(unreadIds).modify({ isRead: true })
-      
+
       // Update local state
       msgs.forEach(m => {
         if (m.from === contactPublicKey) {
