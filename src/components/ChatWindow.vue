@@ -102,8 +102,8 @@
             <!-- Image Preview -->
             <div v-if="isImage(message.file.mimeType)" class="mb-2">
               <img 
-                v-if="message.file.blobUrl || fileCache[message.id]"
-                :src="message.file.blobUrl || fileCache[message.id]"
+                v-if="fileCache[message.id]"
+                :src="fileCache[message.id]"
                 :alt="message.file.originalName"
                 class="max-w-full rounded-lg cursor-pointer"
                 @click="openFile(message)"
@@ -120,8 +120,8 @@
             <!-- Video Preview -->
             <div v-else-if="isVideo(message.file.mimeType)" class="mb-2">
               <video 
-                v-if="message.file.blobUrl || fileCache[message.id]"
-                :src="message.file.blobUrl || fileCache[message.id]"
+                v-if="fileCache[message.id]"
+                :src="fileCache[message.id]"
                 controls
                 class="max-w-full rounded-lg"
               />
@@ -137,8 +137,8 @@
             <!-- Audio Preview -->
             <div v-else-if="isAudio(message.file.mimeType)" class="mb-2">
               <audio 
-                v-if="message.file.blobUrl || fileCache[message.id]"
-                :src="message.file.blobUrl || fileCache[message.id]"
+                v-if="fileCache[message.id]"
+                :src="fileCache[message.id]"
                 controls
                 class="w-full"
               />
@@ -425,15 +425,10 @@ const handleFileSelect = async (event) => {
 
 // Load and decrypt file for preview
 const loadFile = async (message) => {
-  // P2P files already have blob URL
-  if (message.file.blobUrl) {
-    fileCache[message.id] = message.file.blobUrl
-    return
-  }
-  
   if (fileCache[message.id]) return
   
   try {
+    // Get from database or download
     const blob = await chatStore.downloadFile(message)
     if (blob) {
       fileCache[message.id] = URL.createObjectURL(blob)
@@ -457,15 +452,7 @@ const openFile = async (message) => {
 // Download file to device
 const downloadFileToDevice = async (message) => {
   try {
-    let blob
-    
-    // P2P files already have blob
-    if (message.file.blobUrl) {
-      const response = await fetch(message.file.blobUrl)
-      blob = await response.blob()
-    } else {
-      blob = await chatStore.downloadFile(message)
-    }
+    const blob = await chatStore.downloadFile(message)
     
     if (blob) {
       const url = URL.createObjectURL(blob)

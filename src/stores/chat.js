@@ -282,9 +282,6 @@ export const useChatStore = defineStore('chat', () => {
           await addContact(senderPubKey)
         }
         
-        // Create blob URL for file
-        const fileUrl = URL.createObjectURL(event.blob)
-        
         // Generate unique message hash
         const messageHash = await generateMessageId(
           `📎 ${event.fileName}`,
@@ -292,6 +289,17 @@ export const useChatStore = defineStore('chat', () => {
           senderPubKey,
           authStore.publicKey
         )
+        
+        // Store file Blob in files table
+        const fileId = await db.files.add({
+          messageHash,
+          blob: event.blob,
+          mimeType: event.mimeType,
+          originalName: event.fileName,
+          size: event.blob.size,
+          timestamp: event.timestamp,
+          conversationId: senderPubKey
+        })
         
         const message = {
           conversationId: senderPubKey,
@@ -303,11 +311,11 @@ export const useChatStore = defineStore('chat', () => {
           isRead: activeChat.value === senderPubKey,
           expiresAt: event.timestamp + CACHE_DURATION,
           messageHash: messageHash,
+          fileId: fileId,
           file: {
             originalName: event.fileName,
             mimeType: event.mimeType,
             size: event.blob.size,
-            blobUrl: fileUrl, // Store blob URL directly
             isP2P: true
           }
         }
@@ -631,9 +639,6 @@ export const useChatStore = defineStore('chat', () => {
       
       const now = Date.now()
       
-      // Create blob URL for local display
-      const fileUrl = URL.createObjectURL(file)
-      
       // Generate unique message hash
       const messageHash = await generateMessageId(
         `📎 ${file.name}`,
@@ -641,6 +646,17 @@ export const useChatStore = defineStore('chat', () => {
         authStore.publicKey,
         contactPublicKey
       )
+      
+      // Store file Blob in files table
+      const fileId = await db.files.add({
+        messageHash,
+        blob: file,
+        mimeType: file.type,
+        originalName: file.name,
+        size: file.size,
+        timestamp: now,
+        conversationId: contactPublicKey
+      })
       
       const message = {
         conversationId: contactPublicKey,
@@ -652,11 +668,11 @@ export const useChatStore = defineStore('chat', () => {
         isRead: true,
         expiresAt: now + CACHE_DURATION,
         messageHash: messageHash,
+        fileId: fileId,
         file: {
           originalName: file.name,
           mimeType: file.type,
           size: file.size,
-          blobUrl: fileUrl,
           isP2P: true
         }
       }
@@ -683,6 +699,15 @@ export const useChatStore = defineStore('chat', () => {
   const downloadFile = async (message) => {
     console.log('[CHAT] === DOWNLOADING FILE ===')
     
+    // Check if file is stored in database
+    if (message.fileId) {
+      const storedFile = await db.files.get(message.fileId)
+      if (storedFile && storedFile.blob) {
+        console.log('[CHAT] File loaded from database')
+        return storedFile.blob
+      }
+    }
+    
     if (!message.file || !message.file.url) {
       console.error('[CHAT] No file in message')
       return null
@@ -701,7 +726,23 @@ export const useChatStore = defineStore('chat', () => {
         message.file.mimeType
       )
       
-      console.log('[CHAT] File decrypted successfully')
+      // Store in database for future use
+      if (decryptedBlob && message.messageHash) {
+        const fileId = await db.files.add({
+          messageHash: message.messageHash,
+          blob: decryptedBlob,
+          mimeType: message.file.mimeType,
+          originalName: message.file.originalName,
+          size: decryptedBlob.size,
+          timestamp: message.timestamp,
+          conversationId: message.conversationId
+        })
+        
+        // Update message with fileId
+        await db.messages.update(message.id, { fileId })
+      }
+      
+      console.log('[CHAT] File decrypted and cached successfully')
       return decryptedBlob
     } catch (error) {
       console.error('[CHAT] Failed to download/decrypt file:', error)
@@ -817,6 +858,42 @@ export const useChatStore = defineStore('chat', () => {
     })
   })
 
+  // Get all stored files
+  const getAllFiles = async () => {
+    try {
+      return await db.files.toArray()
+    } catch (error) {
+      console.error('[CHAT] Failed to get files:', error)
+      return []
+    }
+  }
+
+  // Delete file from storage
+  const deleteFile = async (fileId) => {
+    try {
+      await db.files.delete(fileId)
+      return true
+    } catch (error) {
+      console.error('[CHAT] Failed to delete file:', error)
+      return false
+    }
+  }
+
+  // Get total storage used
+  const getStorageStats = async () => {
+    try {
+      const files = await db.files.toArray()
+      const totalSize = files.reduce((sum, file) => sum + (file.size || 0), 0)
+      return {
+        fileCount: files.length,
+        totalSize: totalSize
+      }
+    } catch (error) {
+      console.error('[CHAT] Failed to get storage stats:', error)
+      return { fileCount: 0, totalSize: 0 }
+    }
+  }
+
   // Total unread messages
   const totalUnread = computed(() => {
     return contacts.value.reduce((sum, contact) => {
@@ -842,6 +919,9 @@ export const useChatStore = defineStore('chat', () => {
     sendFileP2P,
     deleteMessage,
     downloadFile,
+    getAllFiles,
+    deleteFile,
+    getStorageStats,
     receiveMessage,
     markAsRead,
     setActiveChat,

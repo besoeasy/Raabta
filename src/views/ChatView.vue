@@ -21,6 +21,15 @@
             <p class="text-xs text-gray-500 font-mono truncate">{{ shortenKey(authStore.publicKey) }}</p>
           </div>
           <button 
+            @click="$router.push('/drive')"
+            class="p-2 hover:bg-gray-200 rounded-full transition"
+            title="My Drive"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-600" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+            </svg>
+          </button>
+          <button 
             @click="showSettings = true"
             class="p-2 hover:bg-gray-200 rounded-full transition"
             title="Settings"

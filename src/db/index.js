@@ -55,6 +55,28 @@ db.version(3).stores({
   settings: 'key, value'
 })
 
+// Version 4: Add files table for storing decrypted Blobs
+db.version(4).stores({
+  // User identity storage
+  identity: 'id, privateKey, publicKey, username, createdAt',
+  
+  // Contacts storage
+  contacts: 'publicKey, username, addedAt, lastSeen',
+  
+  // Messages storage - now with messageHash for delete sync
+  messages: '++id, conversationId, from, to, timestamp, isRead, expiresAt, messageHash, fileId, [conversationId+timestamp]',
+  
+  // Files storage - stores decrypted file Blobs
+  // Blob stored directly, persists across sessions
+  files: '++id, messageHash, blob, mimeType, originalName, size, timestamp, conversationId',
+  
+  // Conversation metadata
+  conversations: 'contactPublicKey, lastMessageAt, unreadCount',
+  
+  // Settings storage for user preferences
+  settings: 'key, value'
+})
+
 // Cache expiry duration: 1 year in milliseconds
 export const CACHE_DURATION = 365 * 24 * 60 * 60 * 1000
 

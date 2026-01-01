@@ -17,6 +17,12 @@ const router = createRouter({
       component: () => import('../views/ChatView.vue'),
       meta: { requiresAuth: true }
     },
+    {
+      path: '/drive',
+      name: 'drive',
+      component: () => import('../views/DriveView.vue'),
+      meta: { requiresAuth: true }
+    },
   ],
 })
 
