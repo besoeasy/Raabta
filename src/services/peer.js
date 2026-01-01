@@ -15,6 +15,8 @@ class PeerService {
     this.messageHandler = null
     this.fileHandler = null
     this.fileTransfers = new Map() // Track ongoing file transfers
+    this.callHandler = null // Handle incoming calls
+    this.activeCalls = new Map() // Track active calls
     debug('PeerService initialized')
   }
 
@@ -65,6 +67,21 @@ class PeerService {
         debug('Assigned to room:', roomId)
         
         this.setupConnection(conn, roomId)
+      })
+
+      this.peer.on('call', (call) => {
+        debug('=== INCOMING CALL ===')
+        debug('From peer:', call.peer)
+        debug('Metadata:', call.metadata)
+        
+        if (this.callHandler) {
+          this.callHandler({
+            type: 'incoming',
+            call: call,
+            from: call.metadata?.from || call.peer,
+            callType: call.metadata?.callType || 'video'
+          })
+        }
       })
 
       this.peer.on('error', (err) => {
@@ -423,9 +440,114 @@ class PeerService {
     this.fileHandler = onFile
   }
 
+  // Subscribe to calls
+  subscribeCalls(onCall) {
+    this.callHandler = onCall
+  }
+
+  // Make a call (audio or video)
+  async makeCall(recipientPubKey, stream, callType = 'video') {
+    debug('=== MAKING CALL ===')
+    debug('To peer:', recipientPubKey)
+    debug('Call type:', callType)
+    
+    if (!this.peer || !this.myPublicKey) {
+      throw new Error('Not connected to PeerServer')
+    }
+
+    try {
+      const call = this.peer.call(recipientPubKey, stream, {
+        metadata: {
+          from: this.myPublicKey,
+          callType: callType
+        }
+      })
+
+      this.activeCalls.set(recipientPubKey, call)
+
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          call.close()
+          this.activeCalls.delete(recipientPubKey)
+          reject(new Error('Call timeout - no answer'))
+        }, 30000) // 30 second timeout
+
+        call.on('stream', (remoteStream) => {
+          clearTimeout(timeout)
+          debug('✓ Received remote stream')
+          resolve({ call, remoteStream })
+        })
+
+        call.on('close', () => {
+          debug('Call closed')
+          this.activeCalls.delete(recipientPubKey)
+        })
+
+        call.on('error', (err) => {
+          clearTimeout(timeout)
+          debugError('Call error:', err)
+          this.activeCalls.delete(recipientPubKey)
+          reject(err)
+        })
+      })
+    } catch (error) {
+      debugError('Failed to make call:', error)
+      throw error
+    }
+  }
+
+  // Answer a call
+  async answerCall(call, stream) {
+    debug('=== ANSWERING CALL ===')
+    
+    try {
+      call.answer(stream)
+      
+      const fromPubKey = call.metadata?.from || call.peer
+      this.activeCalls.set(fromPubKey, call)
+
+      return new Promise((resolve, reject) => {
+        call.on('stream', (remoteStream) => {
+          debug('✓ Received remote stream')
+          resolve({ call, remoteStream })
+        })
+
+        call.on('close', () => {
+          debug('Call closed')
+          this.activeCalls.delete(fromPubKey)
+        })
+
+        call.on('error', (err) => {
+          debugError('Call error:', err)
+          this.activeCalls.delete(fromPubKey)
+          reject(err)
+        })
+      })
+    } catch (error) {
+      debugError('Failed to answer call:', error)
+      throw error
+    }
+  }
+
+  // End a call
+  endCall(pubKey) {
+    const call = this.activeCalls.get(pubKey)
+    if (call) {
+      call.close()
+      this.activeCalls.delete(pubKey)
+      debug('Call ended with:', pubKey)
+    }
+  }
+
   // Close all connections
   close() {
     debug('Closing all connections...')
+    
+    // End all active calls
+    for (const [pubKey, call] of this.activeCalls) {
+      call.close()
+    }
+    this.activeCalls.clear()
     
     for (const conn of this.connections.values()) {
       conn.close()

@@ -22,6 +22,27 @@
           <h3 class="font-semibold text-gray-900">{{ activeContact.username }}</h3>
           <p class="text-xs text-gray-500 truncate font-mono">{{ shortenKey(activeContact.publicKey) }}</p>
         </div>
+        
+        <!-- Call Buttons -->
+        <button 
+          @click="startCall('audio')"
+          class="p-2 hover:bg-gray-100 rounded-full transition text-gray-600"
+          title="Audio Call"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M2 3a1 1 0 011-1h2.153a1 1 0 01.986.836l.74 4.435a1 1 0 01-.54 1.06l-1.548.773a11.037 11.037 0 006.105 6.105l.774-1.548a1 1 0 011.059-.54l4.435.74a1 1 0 01.836.986V17a1 1 0 01-1 1h-2C7.82 18 2 12.18 2 5V3z" />
+          </svg>
+        </button>
+        <button 
+          @click="startCall('video')"
+          class="p-2 hover:bg-gray-100 rounded-full transition text-gray-600"
+          title="Video Call"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM14.553 7.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z" />
+          </svg>
+        </button>
+        
         <button 
           @click="chatStore.sidebarVisible = !chatStore.sidebarVisible"
           :class="[
@@ -333,6 +354,26 @@
         </div>
       </div>
     </div>
+    
+    <!-- Incoming Call Modal -->
+    <IncomingCallModal
+      :is-visible="!!chatStore.incomingCall"
+      :caller-name="incomingCallContact?.username || 'Unknown'"
+      :call-type="chatStore.incomingCall?.callType || 'video'"
+      @accept="handleAcceptCall"
+      @decline="handleDeclineCall"
+    />
+    
+    <!-- Call Window -->
+    <CallWindow
+      :is-visible="!!chatStore.activeCall"
+      :call-type="chatStore.activeCall?.callType || 'video'"
+      :call-status="chatStore.callStatus"
+      :contact-name="activeCallContact?.username || 'Unknown'"
+      :local-stream="chatStore.activeCall?.localStream"
+      :remote-stream="chatStore.activeCall?.remoteStream"
+      @end-call="handleEndCall"
+    />
   </div>
 </template>
 
@@ -340,6 +381,8 @@
 import { ref, computed, watch, nextTick, reactive } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { isImageFile, isVideoFile, isAudioFile, formatFileSize } from '../services/filedrop'
+import CallWindow from './CallWindow.vue'
+import IncomingCallModal from './IncomingCallModal.vue'
 
 const chatStore = useChatStore()
 
@@ -559,6 +602,47 @@ const sendFileP2P = async (file) => {
     p2pFileName.value = ''
   }
 }
+
+// Call handling
+const startCall = async (callType) => {
+  if (!chatStore.activeChat) return
+  
+  try {
+    await chatStore.makeCall(chatStore.activeChat, callType)
+  } catch (error) {
+    console.error('Failed to start call:', error)
+    alert('Failed to start call: ' + error.message)
+  }
+}
+
+const handleAcceptCall = async () => {
+  try {
+    await chatStore.answerCall()
+  } catch (error) {
+    console.error('Failed to answer call:', error)
+    alert('Failed to answer call: ' + error.message)
+  }
+}
+
+const handleDeclineCall = () => {
+  chatStore.declineCall()
+}
+
+const handleEndCall = () => {
+  chatStore.endCall()
+}
+
+// Computed for call UI
+const incomingCallContact = computed(() => {
+  if (!chatStore.incomingCall) return null
+  return chatStore.contacts.find(c => c.publicKey === chatStore.incomingCall.from)
+})
+
+const activeCallContact = computed(() => {
+  if (!chatStore.activeCall) return null
+  return chatStore.contacts.find(c => c.publicKey === chatStore.activeCall.pubKey)
+})
+
 </script>
 
 <style scoped>

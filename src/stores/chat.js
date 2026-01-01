@@ -39,6 +39,11 @@ export const useChatStore = defineStore('chat', () => {
   // Processed message IDs to avoid duplicates
   const processedMessages = ref(new Set())
 
+  // Call state
+  const incomingCall = ref(null) // { from, call, callType }
+  const activeCall = ref(null) // { pubKey, call, callType, localStream, remoteStream }
+  const callStatus = ref('idle') // 'idle', 'ringing', 'connecting', 'connected', 'ended'
+
   // Load data from IndexedDB and connect to Nostr
   const init = async () => {
     console.log('[CHAT] === INITIALIZING CHAT STORE ===')
@@ -110,6 +115,9 @@ export const useChatStore = defineStore('chat', () => {
       
       console.log('[CHAT] Subscribing to P2P file transfers...')
       peerService.subscribeFiles(handleIncomingFile)
+      
+      console.log('[CHAT] Subscribing to calls...')
+      peerService.subscribeCalls(handleIncomingCall)
       
       console.log('[CHAT] ✓ Connected to PeerJS server, isConnected:', isConnected.value)
     } catch (error) {
@@ -334,6 +342,181 @@ export const useChatStore = defineStore('chat', () => {
         console.error('[CHAT] ✗ Failed to process P2P file:', error)
       }
     }
+  }
+  
+  // Handle incoming call
+  const handleIncomingCall = (event) => {
+    console.log('[CHAT] === INCOMING CALL ===')
+    console.log('[CHAT] Call type:', event.callType)
+    console.log('[CHAT] From:', event.from)
+    
+    if (event.type === 'incoming') {
+      // Store incoming call info
+      incomingCall.value = {
+        from: event.from,
+        call: event.call,
+        callType: event.callType
+      }
+      callStatus.value = 'ringing'
+      
+      // Play ringtone (optional)
+      // const audio = new Audio('/ringtone.mp3')
+      // audio.loop = true
+      // audio.play()
+    }
+  }
+  
+  // Make an outgoing call (video or audio)
+  const makeCall = async (recipientPubKey, callType = 'video') => {
+    try {
+      console.log('[CHAT] === MAKING CALL ===')
+      console.log('[CHAT] Recipient:', recipientPubKey)
+      console.log('[CHAT] Call type:', callType)
+      
+      callStatus.value = 'connecting'
+      
+      // Get user media
+      const constraints = {
+        audio: true,
+        video: callType === 'video' ? {
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } : false
+      }
+      
+      const localStream = await navigator.mediaDevices.getUserMedia(constraints)
+      console.log('[CHAT] Got local stream')
+      
+      // Make call through peer service
+      const { call, remoteStream } = await peerService.makeCall(recipientPubKey, localStream, callType)
+      
+      console.log('[CHAT] ✓ Call connected')
+      
+      // Store active call info
+      activeCall.value = {
+        pubKey: recipientPubKey,
+        call,
+        callType,
+        localStream,
+        remoteStream
+      }
+      callStatus.value = 'connected'
+      
+      // Listen for call end
+      call.on('close', () => {
+        console.log('[CHAT] Call closed')
+        endActiveCall()
+      })
+      
+      return { localStream, remoteStream }
+    } catch (error) {
+      console.error('[CHAT] ✗ Failed to make call:', error)
+      callStatus.value = 'idle'
+      throw error
+    }
+  }
+  
+  // Answer incoming call
+  const answerCall = async () => {
+    try {
+      if (!incomingCall.value) {
+        throw new Error('No incoming call')
+      }
+      
+      console.log('[CHAT] === ANSWERING CALL ===')
+      console.log('[CHAT] Call type:', incomingCall.value.callType)
+      
+      callStatus.value = 'connecting'
+      
+      // Get user media
+      const constraints = {
+        audio: true,
+        video: incomingCall.value.callType === 'video' ? {
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } : false
+      }
+      
+      const localStream = await navigator.mediaDevices.getUserMedia(constraints)
+      console.log('[CHAT] Got local stream')
+      
+      // Answer call through peer service
+      const { call, remoteStream } = await peerService.answerCall(incomingCall.value.call, localStream)
+      
+      console.log('[CHAT] ✓ Call answered')
+      
+      // Store active call info
+      activeCall.value = {
+        pubKey: incomingCall.value.from,
+        call,
+        callType: incomingCall.value.callType,
+        localStream,
+        remoteStream
+      }
+      callStatus.value = 'connected'
+      
+      // Clear incoming call
+      incomingCall.value = null
+      
+      // Listen for call end
+      call.on('close', () => {
+        console.log('[CHAT] Call closed')
+        endActiveCall()
+      })
+      
+      return { localStream, remoteStream }
+    } catch (error) {
+      console.error('[CHAT] ✗ Failed to answer call:', error)
+      callStatus.value = 'idle'
+      incomingCall.value = null
+      throw error
+    }
+  }
+  
+  // Decline incoming call
+  const declineCall = () => {
+    console.log('[CHAT] === DECLINING CALL ===')
+    
+    if (incomingCall.value) {
+      incomingCall.value.call.close()
+      incomingCall.value = null
+    }
+    
+    callStatus.value = 'idle'
+  }
+  
+  // End active call
+  const endCall = () => {
+    console.log('[CHAT] === ENDING CALL ===')
+    
+    if (activeCall.value) {
+      // Stop local stream tracks
+      if (activeCall.value.localStream) {
+        activeCall.value.localStream.getTracks().forEach(track => track.stop())
+      }
+      
+      // Close call through peer service
+      peerService.endCall(activeCall.value.pubKey)
+      
+      endActiveCall()
+    }
+  }
+  
+  // Clean up active call
+  const endActiveCall = () => {
+    if (activeCall.value) {
+      // Stop all tracks
+      if (activeCall.value.localStream) {
+        activeCall.value.localStream.getTracks().forEach(track => track.stop())
+      }
+      if (activeCall.value.remoteStream) {
+        activeCall.value.remoteStream.getTracks().forEach(track => track.stop())
+      }
+      
+      activeCall.value = null
+    }
+    
+    callStatus.value = 'idle'
   }
   
   // Disconnect from Peer
@@ -906,6 +1089,9 @@ export const useChatStore = defineStore('chat', () => {
     messages,
     activeChat,
     sidebarVisible,
+    incomingCall,
+    activeCall,
+    callStatus,
     sortedContacts,
     totalUnread,
     isConnected,
@@ -927,6 +1113,10 @@ export const useChatStore = defineStore('chat', () => {
     setActiveChat,
     getMessages,
     getLastMessage,
-    getUnreadCount
+    getUnreadCount,
+    makeCall,
+    answerCall,
+    declineCall,
+    endCall
   }
 })
