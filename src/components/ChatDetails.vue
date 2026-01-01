@@ -1,7 +1,7 @@
 <template>
   <Transition name="slide">
     <div 
-      v-if="chatStore.sidebarVisible"
+      v-if="chatStore.sidebarVisible && activeContact"
       @mousemove="resetTimer"
       @click="resetTimer"
       :class="[
@@ -10,18 +10,6 @@
         'w-full md:w-96'
       ]"
     >
-      <!-- No Chat Selected -->
-      <div v-if="!activeContact" class="flex-1 flex items-center justify-center p-6">
-      <div class="text-center text-gray-400">
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <p class="text-sm">Select a chat to view details</p>
-      </div>
-    </div>
-
-    <!-- Chat Details Content -->
-    <template v-else>
       <!-- Header -->
       <div class="p-4 md:p-6 border-b border-gray-200">
         <!-- Close button for mobile -->
@@ -293,7 +281,6 @@
           </div>
         </div>
       </div>
-    </template>
     </div>
   </Transition>
 </template>
