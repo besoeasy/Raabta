@@ -41,6 +41,9 @@
       <ChatWindow />
     </div>
 
+    <!-- Chat Details Sidebar -->
+    <ChatDetails />
+
     <!-- Settings Modal -->
     <div 
       v-if="showSettings"
@@ -156,6 +159,7 @@ import { useChatStore } from '../stores/chat'
 import { getFiledropServer } from '../services/filedrop'
 import ChatList from '../components/ChatList.vue'
 import ChatWindow from '../components/ChatWindow.vue'
+import ChatDetails from '../components/ChatDetails.vue'
 import SettingsModal from '../components/SettingsModal.vue'
 
 const router = useRouter()

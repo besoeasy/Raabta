@@ -18,6 +18,9 @@ export const useChatStore = defineStore('chat', () => {
   // Currently active chat
   const activeChat = ref(null)
   
+  // Sidebar visibility
+  const sidebarVisible = ref(true)
+  
   // Peer connection status
   const isConnected = computed(() => peerService.connected.value)
   
@@ -570,6 +573,7 @@ export const useChatStore = defineStore('chat', () => {
     contacts,
     messages,
     activeChat,
+    sidebarVisible,
     sortedContacts,
     totalUnread,
     isConnected,

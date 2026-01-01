@@ -23,6 +23,18 @@
           <p class="text-xs text-gray-500 truncate font-mono">{{ shortenKey(activeContact.publicKey) }}</p>
         </div>
         <button 
+          @click="chatStore.sidebarVisible = !chatStore.sidebarVisible"
+          :class="[
+            'p-2 rounded-full transition',
+            chatStore.sidebarVisible ? 'bg-blue-100 text-blue-600' : 'hover:bg-gray-100 text-gray-600'
+          ]"
+          :title="chatStore.sidebarVisible ? 'Hide Details' : 'Show Details'"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd" />
+          </svg>
+        </button>
+        <button 
           @click="showInfo = true"
           class="p-2 hover:bg-gray-100 rounded-full transition"
           title="Contact Info"
