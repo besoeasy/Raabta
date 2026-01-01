@@ -51,22 +51,7 @@
         <h3 class="text-xl font-semibold mb-6 text-gray-900">Settings</h3>
         
         <div class="space-y-6">
-          <!-- Connection Status -->
-          <div>
-            <label class="block text-sm font-medium text-gray-600 mb-2">Nostr Relay Status</label>
-            <div class="flex items-center gap-2">
-              <span 
-                :class="[
-                  'w-3 h-3 rounded-full',
-                  chatStore.isConnected ? 'bg-green-500' : 'bg-yellow-500'
-                ]"
-              ></span>
-              <span :class="chatStore.isConnected ? 'text-green-600' : 'text-yellow-600'">
-                {{ chatStore.isConnected ? 'Connected' : 'Connecting...' }}
-              </span>
-            </div>
-          </div>
-          
+       
           <!-- Your Identity -->
           <div>
             <label class="block text-sm font-medium text-gray-600 mb-2">Your Username</label>
