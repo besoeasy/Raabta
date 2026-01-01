@@ -515,12 +515,6 @@ const handleP2PFileSelect = async (event) => {
 const sendFileP2P = async (file) => {
   if (!chatStore.activeChat) return
   
-  const maxSize = 100 * 1024 * 1024 // 100MB for P2P
-  if (file.size > maxSize) {
-    alert('File too large. Maximum size is 100MB for P2P transfer.')
-    return
-  }
-  
   p2pTransferProgress.value = 0
   p2pFileName.value = file.name
   
