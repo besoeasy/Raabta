@@ -13,6 +13,8 @@ class PeerService {
     this.myPeerId = ref(null)
     this.myPublicKey = null
     this.messageHandler = null
+    this.fileHandler = null
+    this.fileTransfers = new Map() // Track ongoing file transfers
     debug('PeerService initialized')
   }
 
@@ -100,19 +102,73 @@ class PeerService {
     })
 
     conn.on('data', (data) => {
-      debug('=== RECEIVED MESSAGE ===')
+      debug('=== RECEIVED DATA ===')
       debug('From room:', roomId)
-      debug('Data:', data)
+      debug('Data type:', data.type)
       
-      if (this.messageHandler && data.type === 'message') {
+      if (data.type === 'message' && this.messageHandler) {
         const senderPubKey = data.fromPubKey
-        
         this.messageHandler({
           from: senderPubKey,
           encryptedText: data.encryptedText,
           timestamp: data.timestamp,
           messageId: data.messageId
         })
+      } else if (data.type === 'file-start' && this.fileHandler) {
+        debug('File transfer starting:', data.fileName, 'size:', data.fileSize)
+        this.fileTransfers.set(data.transferId, {
+          fileName: data.fileName,
+          fileSize: data.fileSize,
+          mimeType: data.mimeType,
+          totalChunks: data.totalChunks,
+          chunks: [],
+          receivedChunks: 0,
+          fromPubKey: data.fromPubKey,
+          timestamp: data.timestamp
+        })
+        this.fileHandler({
+          type: 'progress',
+          transferId: data.transferId,
+          fileName: data.fileName,
+          progress: 0,
+          from: data.fromPubKey
+        })
+      } else if (data.type === 'file-chunk') {
+        const transfer = this.fileTransfers.get(data.transferId)
+        if (transfer) {
+          transfer.chunks[data.chunkIndex] = data.chunk
+          transfer.receivedChunks++
+          const progress = (transfer.receivedChunks / transfer.totalChunks) * 100
+          debug(`Received chunk ${data.chunkIndex + 1}/${transfer.totalChunks} (${progress.toFixed(1)}%)`)
+          
+          if (this.fileHandler) {
+            this.fileHandler({
+              type: 'progress',
+              transferId: data.transferId,
+              fileName: transfer.fileName,
+              progress: progress,
+              from: transfer.fromPubKey
+            })
+          }
+          
+          if (transfer.receivedChunks === transfer.totalChunks) {
+            debug('File transfer complete, reassembling...')
+            const blob = new Blob(transfer.chunks, { type: transfer.mimeType })
+            this.fileTransfers.delete(data.transferId)
+            
+            if (this.fileHandler) {
+              this.fileHandler({
+                type: 'complete',
+                transferId: data.transferId,
+                fileName: transfer.fileName,
+                blob: blob,
+                mimeType: transfer.mimeType,
+                from: transfer.fromPubKey,
+                timestamp: transfer.timestamp
+              })
+            }
+          }
+        }
       }
     })
 
@@ -207,6 +263,102 @@ class PeerService {
     }
   }
 
+  // Send file via P2P (no server)
+  async sendFileP2P(recipientPubKey, file, onProgress) {
+    debug('=== SENDING FILE P2P ===')
+    debug('To peer:', recipientPubKey)
+    debug('File:', file.name, 'size:', file.size)
+    
+    if (!this.peer || !this.myPublicKey) {
+      throw new Error('Not connected to PeerServer')
+    }
+
+    try {
+      const roomId = this.createRoomId(this.myPublicKey, recipientPubKey)
+      let conn = this.connections.get(roomId)
+      
+      if (!conn || !conn.open) {
+        conn = this.peer.connect(recipientPubKey, {
+          reliable: true,
+          metadata: { 
+            from: this.myPublicKey,
+            roomId: roomId
+          }
+        })
+        
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('Connection timeout')), 10000)
+          conn.on('open', () => {
+            clearTimeout(timeout)
+            this.setupConnection(conn, roomId)
+            resolve()
+          })
+          conn.on('error', (err) => {
+            clearTimeout(timeout)
+            reject(err)
+          })
+        })
+      }
+
+      // Read file as array buffer
+      const arrayBuffer = await file.arrayBuffer()
+      const transferId = crypto.randomUUID()
+      const CHUNK_SIZE = 16 * 1024 // 16KB chunks for reliable transfer
+      const totalChunks = Math.ceil(arrayBuffer.byteLength / CHUNK_SIZE)
+      
+      debug(`Splitting into ${totalChunks} chunks`)
+      
+      // Send file metadata first
+      conn.send({
+        type: 'file-start',
+        transferId,
+        fileName: file.name,
+        fileSize: file.size,
+        mimeType: file.type,
+        totalChunks,
+        fromPubKey: this.myPublicKey,
+        timestamp: Date.now()
+      })
+      
+      // Send chunks with delay to avoid overwhelming the connection
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_SIZE
+        const end = Math.min(start + CHUNK_SIZE, arrayBuffer.byteLength)
+        const chunk = arrayBuffer.slice(start, end)
+        
+        conn.send({
+          type: 'file-chunk',
+          transferId,
+          chunkIndex: i,
+          chunk
+        })
+        
+        const progress = ((i + 1) / totalChunks) * 100
+        if (onProgress) {
+          onProgress(progress)
+        }
+        
+        debug(`Sent chunk ${i + 1}/${totalChunks} (${progress.toFixed(1)}%)`)
+        
+        // Small delay to prevent overwhelming
+        if (i % 10 === 0) {
+          await new Promise(resolve => setTimeout(resolve, 10))
+        }
+      }
+      
+      debug('✓ File sent successfully')
+      return transferId
+    } catch (error) {
+      debugError('Failed to send file:', error)
+      throw error
+    }
+  }
+
+  // Subscribe to file transfers
+  subscribeFiles(onFile) {
+    this.fileHandler = onFile
+  }
+
   // Close all connections
   close() {
     debug('Closing all connections...')
@@ -215,6 +367,7 @@ class PeerService {
       conn.close()
     }
     this.connections.clear()
+    this.fileTransfers.clear()
     
     if (this.peer) {
       this.peer.destroy()

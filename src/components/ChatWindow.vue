@@ -46,7 +46,27 @@
       </div>
 
       <!-- Messages Area -->
-      <div ref="messagesContainer" class="flex-1 overflow-y-auto p-4 space-y-3">
+      <div 
+        ref="messagesContainer" 
+        class="flex-1 overflow-y-auto p-4 space-y-3 relative"
+        @dragover.prevent="onDragOver"
+        @dragleave="onDragLeave"
+        @drop.prevent="onDrop"
+      >
+        <!-- Drop Zone Overlay -->
+        <Transition name="fade">
+          <div 
+            v-if="isDragging"
+            class="absolute inset-0 bg-blue-500/10 backdrop-blur-sm border-4 border-dashed border-blue-500 rounded-lg flex items-center justify-center z-10"
+          >
+            <div class="text-center">
+              <div class="text-6xl mb-4">📁</div>
+              <p class="text-xl font-semibold text-blue-600 mb-2">Drop file here</p>
+              <p class="text-sm text-blue-500">Send directly via P2P (no server)</p>
+            </div>
+          </div>
+        </Transition>
+
         <div 
           v-for="message in chatMessages" 
           :key="message.id"
@@ -59,11 +79,19 @@
         >
           <!-- File Attachment -->
           <div v-if="message.file" class="mb-2">
+            <!-- P2P Badge -->
+            <div v-if="message.file.isP2P" class="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs font-medium mb-2">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              P2P Transfer
+            </div>
+            
             <!-- Image Preview -->
             <div v-if="isImage(message.file.mimeType)" class="mb-2">
               <img 
-                v-if="fileCache[message.id]"
-                :src="fileCache[message.id]"
+                v-if="message.file.blobUrl || fileCache[message.id]"
+                :src="message.file.blobUrl || fileCache[message.id]"
                 :alt="message.file.originalName"
                 class="max-w-full rounded-lg cursor-pointer"
                 @click="openFile(message)"
@@ -80,8 +108,8 @@
             <!-- Video Preview -->
             <div v-else-if="isVideo(message.file.mimeType)" class="mb-2">
               <video 
-                v-if="fileCache[message.id]"
-                :src="fileCache[message.id]"
+                v-if="message.file.blobUrl || fileCache[message.id]"
+                :src="message.file.blobUrl || fileCache[message.id]"
                 controls
                 class="max-w-full rounded-lg"
               />
@@ -97,8 +125,8 @@
             <!-- Audio Preview -->
             <div v-else-if="isAudio(message.file.mimeType)" class="mb-2">
               <audio 
-                v-if="fileCache[message.id]"
-                :src="fileCache[message.id]"
+                v-if="message.file.blobUrl || fileCache[message.id]"
+                :src="message.file.blobUrl || fileCache[message.id]"
                 controls
                 class="w-full"
               />
@@ -167,15 +195,32 @@
         </div>
       </div>
 
+      <!-- P2P Transfer Progress -->
+      <div v-if="p2pTransferProgress !== null" class="bg-green-50 border-t border-green-200 px-4 py-3">
+        <div class="space-y-2">
+          <div class="flex items-center gap-3">
+            <div class="animate-pulse h-4 w-4 bg-green-500 rounded-full"></div>
+            <span class="text-sm text-green-700 font-medium">Sending via P2P: {{ p2pFileName }}</span>
+          </div>
+          <div class="w-full bg-green-200 rounded-full h-2 overflow-hidden">
+            <div 
+              class="bg-green-500 h-full transition-all duration-300"
+              :style="{ width: p2pTransferProgress + '%' }"
+            ></div>
+          </div>
+          <p class="text-xs text-green-600">{{ p2pTransferProgress.toFixed(0) }}% complete</p>
+        </div>
+      </div>
+
       <!-- Input Area -->
       <div class="bg-white border-t border-gray-200 p-4">
         <form @submit.prevent="sendMessage" class="flex gap-2 items-end">
-          <!-- File Attachment Button -->
+          <!-- File Attachment Button (Server) -->
           <button 
             type="button"
             @click="$refs.fileInput.click()"
             class="p-2 hover:bg-gray-100 rounded-full transition text-gray-600"
-            title="Attach file"
+            title="Attach file (via server)"
           >
             <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
@@ -186,6 +231,24 @@
             type="file"
             class="hidden"
             @change="handleFileSelect"
+          />
+          
+          <!-- P2P File Button -->
+          <button 
+            type="button"
+            @click="$refs.p2pFileInput.click()"
+            class="p-2 hover:bg-green-100 rounded-full transition text-green-600"
+            title="Send file P2P (no server)"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+          </button>
+          <input 
+            ref="p2pFileInput"
+            type="file"
+            class="hidden"
+            @change="handleP2PFileSelect"
           />
           
           <input 
@@ -272,8 +335,12 @@ const newMessage = ref('')
 const showInfo = ref(false)
 const messagesContainer = ref(null)
 const fileInput = ref(null)
+const p2pFileInput = ref(null)
 const isUploading = ref(false)
 const fileCache = reactive({}) // Cache decrypted file URLs
+const isDragging = ref(false)
+const p2pTransferProgress = ref(null)
+const p2pFileName = ref('')
 
 const activeContact = computed(() => {
   if (!chatStore.activeChat) return null
@@ -346,6 +413,12 @@ const handleFileSelect = async (event) => {
 
 // Load and decrypt file for preview
 const loadFile = async (message) => {
+  // P2P files already have blob URL
+  if (message.file.blobUrl) {
+    fileCache[message.id] = message.file.blobUrl
+    return
+  }
+  
   if (fileCache[message.id]) return
   
   try {
@@ -372,7 +445,16 @@ const openFile = async (message) => {
 // Download file to device
 const downloadFileToDevice = async (message) => {
   try {
-    const blob = await chatStore.downloadFile(message)
+    let blob
+    
+    // P2P files already have blob
+    if (message.file.blobUrl) {
+      const response = await fetch(message.file.blobUrl)
+      blob = await response.blob()
+    } else {
+      blob = await chatStore.downloadFile(message)
+    }
+    
     if (blob) {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -385,7 +467,7 @@ const downloadFileToDevice = async (message) => {
     }
   } catch (error) {
     console.error('Failed to download file:', error)
-    alert('Failed to decrypt file: ' + error.message)
+    alert('Failed to download file: ' + error.message)
   }
 }
 
@@ -400,4 +482,75 @@ const deleteContact = async () => {
     showInfo.value = false
   }
 }
+
+// Drag and drop handlers
+const onDragOver = (e) => {
+  isDragging.value = true
+}
+
+const onDragLeave = (e) => {
+  // Only hide if leaving the container, not child elements
+  if (e.target === messagesContainer.value) {
+    isDragging.value = false
+  }
+}
+
+const onDrop = async (e) => {
+  isDragging.value = false
+  const file = e.dataTransfer.files[0]
+  if (file && chatStore.activeChat) {
+    await sendFileP2P(file)
+  }
+}
+
+// P2P file transfer
+const handleP2PFileSelect = async (event) => {
+  const file = event.target.files?.[0]
+  if (!file) return
+  
+  event.target.value = ''
+  await sendFileP2P(file)
+}
+
+const sendFileP2P = async (file) => {
+  if (!chatStore.activeChat) return
+  
+  const maxSize = 100 * 1024 * 1024 // 100MB for P2P
+  if (file.size > maxSize) {
+    alert('File too large. Maximum size is 100MB for P2P transfer.')
+    return
+  }
+  
+  p2pTransferProgress.value = 0
+  p2pFileName.value = file.name
+  
+  try {
+    await chatStore.sendFileP2P(chatStore.activeChat, file, (progress) => {
+      p2pTransferProgress.value = progress
+    })
+    
+    // Keep progress visible briefly
+    setTimeout(() => {
+      p2pTransferProgress.value = null
+      p2pFileName.value = ''
+    }, 2000)
+  } catch (error) {
+    console.error('Failed to send file P2P:', error)
+    alert('Failed to send file: ' + error.message)
+    p2pTransferProgress.value = null
+    p2pFileName.value = ''
+  }
+}
 </script>
+
+<style scoped>
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+</style>

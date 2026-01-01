@@ -96,6 +96,9 @@ export const useChatStore = defineStore('chat', () => {
       console.log('[CHAT] Subscribing to messages...')
       peerService.subscribe(authStore.publicKey, handleIncomingMessage)
       
+      console.log('[CHAT] Subscribing to P2P file transfers...')
+      peerService.subscribeFiles(handleIncomingFile)
+      
       console.log('[CHAT] ✓ Connected to PeerJS server, isConnected:', isConnected.value)
     } catch (error) {
       console.error('[CHAT] ✗ Failed to connect to PeerJS:', error)
@@ -203,6 +206,63 @@ export const useChatStore = defineStore('chat', () => {
       console.log('[CHAT] ✓ Message saved and added to UI')
     } catch (error) {
       console.error('[CHAT] ✗ Failed to process incoming message:', error)
+    }
+  }
+
+  // Handle incoming P2P file
+  const handleIncomingFile = async (event) => {
+    console.log('[CHAT] === INCOMING P2P FILE ===')
+    console.log('[CHAT] Event type:', event.type)
+    
+    if (event.type === 'progress') {
+      console.log(`[CHAT] Receiving ${event.fileName}: ${event.progress.toFixed(1)}%`)
+      // Could show notification here
+    } else if (event.type === 'complete') {
+      console.log('[CHAT] File received:', event.fileName)
+      
+      try {
+        const senderPubKey = event.from
+        
+        // Auto-add contact if not exists
+        let existingContact = contacts.value.find(c => c.publicKey === senderPubKey)
+        if (!existingContact) {
+          await addContact(senderPubKey)
+        }
+        
+        // Create blob URL for file
+        const fileUrl = URL.createObjectURL(event.blob)
+        
+        const message = {
+          conversationId: senderPubKey,
+          text: `📎 ${event.fileName}`,
+          from: senderPubKey,
+          to: authStore.publicKey,
+          timestamp: event.timestamp,
+          isSent: false,
+          isRead: activeChat.value === senderPubKey,
+          expiresAt: event.timestamp + CACHE_DURATION,
+          file: {
+            originalName: event.fileName,
+            mimeType: event.mimeType,
+            size: event.blob.size,
+            blobUrl: fileUrl, // Store blob URL directly
+            isP2P: true
+          }
+        }
+        
+        const id = await db.messages.add(message)
+        message.id = id
+        
+        if (!messages.value[senderPubKey]) {
+          messages.value[senderPubKey] = []
+        }
+        messages.value[senderPubKey].push(message)
+        messages.value[senderPubKey].sort((a, b) => a.timestamp - b.timestamp)
+        
+        console.log('[CHAT] ✓ P2P file saved and added to UI')
+      } catch (error) {
+        console.error('[CHAT] ✗ Failed to process P2P file:', error)
+      }
     }
   }
   
@@ -424,6 +484,67 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  // Send file via P2P (no server)
+  const sendFileP2P = async (contactPublicKey, file, onProgress) => {
+    console.log('[CHAT] === SENDING FILE P2P ===')
+    console.log('[CHAT] Contact pubkey:', contactPublicKey)
+    console.log('[CHAT] File:', file.name, 'size:', file.size)
+    
+    if (!authStore.privateKey || !file) {
+      console.log('[CHAT] Aborted: no private key or no file')
+      return null
+    }
+    
+    if (!isConnected.value) {
+      throw new Error('Not connected to peer network')
+    }
+    
+    try {
+      // Send file via P2P
+      const transferId = await peerService.sendFileP2P(contactPublicKey, file, onProgress)
+      console.log('[CHAT] File sent P2P, transfer ID:', transferId)
+      
+      const now = Date.now()
+      
+      // Create blob URL for local display
+      const fileUrl = URL.createObjectURL(file)
+      
+      const message = {
+        conversationId: contactPublicKey,
+        text: `📎 ${file.name}`,
+        from: authStore.publicKey,
+        to: contactPublicKey,
+        timestamp: now,
+        isSent: true,
+        isRead: true,
+        expiresAt: now + CACHE_DURATION,
+        file: {
+          originalName: file.name,
+          mimeType: file.type,
+          size: file.size,
+          blobUrl: fileUrl,
+          isP2P: true
+        }
+      }
+      
+      // Save to IndexedDB
+      const id = await db.messages.add(message)
+      message.id = id
+      console.log('[CHAT] P2P file message saved to DB with id:', id)
+      
+      // Update local state
+      if (!messages.value[contactPublicKey]) {
+        messages.value[contactPublicKey] = []
+      }
+      messages.value[contactPublicKey].push(message)
+      
+      return message
+    } catch (error) {
+      console.error('Failed to send file P2P:', error)
+      throw error
+    }
+  }
+
   // Download and decrypt a file from a message
   const downloadFile = async (message) => {
     console.log('[CHAT] === DOWNLOADING FILE ===')
@@ -584,6 +705,7 @@ export const useChatStore = defineStore('chat', () => {
     removeContact,
     sendMessage,
     sendFile,
+    sendFileP2P,
     downloadFile,
     receiveMessage,
     markAsRead,
