@@ -12,11 +12,11 @@
     <!-- Sidebar -->
     <Transition name="slide-left">
       <div 
-        v-show="showMobileNav || !chatStore.activeChat"
+        v-show="showMobileNav"
         :class="[
           'flex-shrink-0 flex flex-col bg-white border-r border-gray-200',
           'fixed md:relative inset-y-0 left-0 z-50 md:z-auto',
-          'w-full md:w-80'
+          'w-full md:w-80 md:!block'
         ]"
       >
         <!-- User Info -->
@@ -76,12 +76,7 @@
     </Transition>
 
     <!-- Chat Window -->
-    <div 
-      :class="[
-        'flex-1',
-        !chatStore.activeChat && 'hidden md:block'
-      ]"
-    >
+    <div class="flex-1">
       <ChatWindow :show-mobile-nav="showMobileNav" @toggle-nav="showMobileNav = !showMobileNav" />
     </div>
 
