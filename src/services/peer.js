@@ -112,8 +112,18 @@ class PeerService {
           from: senderPubKey,
           encryptedText: data.encryptedText,
           timestamp: data.timestamp,
-          messageId: data.messageId
+          messageId: data.messageId,
+          messageHash: data.messageHash
         })
+      } else if (data.type === 'delete-message') {
+        debug('Delete message instruction received:', data.messageHash)
+        if (this.messageHandler) {
+          this.messageHandler({
+            type: 'delete',
+            messageHash: data.messageHash,
+            from: data.fromPubKey
+          })
+        }
       } else if (data.type === 'file-start' && this.fileHandler) {
         debug('File transfer starting:', data.fileName, 'size:', data.fileSize)
         this.fileTransfers.set(data.transferId, {
@@ -194,11 +204,12 @@ class PeerService {
   }
 
   // Send message to a peer
-  async sendMessage(recipientPubKey, encryptedText) {
+  async sendMessage(recipientPubKey, encryptedText, messageHash) {
     debug('=== SENDING MESSAGE ===')
     debug('To peer (pubkey):', recipientPubKey)
     debug('My pubkey:', this.myPublicKey)
     debug('Encrypted text length:', encryptedText.length)
+    debug('Message hash:', messageHash)
     
     if (!this.peer || !this.myPublicKey) {
       throw new Error('Not connected to PeerServer')
@@ -250,7 +261,8 @@ class PeerService {
         fromPubKey: this.myPublicKey,
         encryptedText,
         timestamp: Date.now(),
-        messageId: crypto.randomUUID()
+        messageId: crypto.randomUUID(),
+        messageHash: messageHash
       }
       
       conn.send(messageData)
@@ -259,6 +271,58 @@ class PeerService {
       return messageData.messageId
     } catch (error) {
       debugError('Failed to send message:', error)
+      throw error
+    }
+  }
+
+  // Send delete message instruction
+  async sendDeleteMessage(recipientPubKey, messageHash) {
+    debug('=== SENDING DELETE MESSAGE ===')
+    debug('To peer:', recipientPubKey)
+    debug('Message Hash:', messageHash)
+    
+    if (!this.peer || !this.myPublicKey) {
+      throw new Error('Not connected to PeerServer')
+    }
+
+    try {
+      const roomId = this.createRoomId(this.myPublicKey, recipientPubKey)
+      let conn = this.connections.get(roomId)
+      
+      if (!conn || !conn.open) {
+        conn = this.peer.connect(recipientPubKey, {
+          reliable: true,
+          metadata: { 
+            from: this.myPublicKey,
+            roomId: roomId
+          }
+        })
+        
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('Connection timeout')), 10000)
+          conn.on('open', () => {
+            clearTimeout(timeout)
+            this.setupConnection(conn, roomId)
+            resolve()
+          })
+          conn.on('error', (err) => {
+            clearTimeout(timeout)
+            reject(err)
+          })
+        })
+      }
+
+      conn.send({
+        type: 'delete-message',
+        messageHash,
+        fromPubKey: this.myPublicKey,
+        timestamp: Date.now()
+      })
+      
+      debug('✓ Delete instruction sent')
+      return true
+    } catch (error) {
+      debugError('Failed to send delete instruction:', error)
       throw error
     }
   }

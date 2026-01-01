@@ -71,12 +71,24 @@
           v-for="message in chatMessages" 
           :key="message.id"
           :class="[
-            'max-w-[75%] rounded-2xl px-4 py-2',
+            'max-w-[75%] rounded-2xl px-4 py-2 relative group',
             message.isSent 
               ? 'ml-auto bg-blue-500 text-white rounded-br-md' 
               : 'mr-auto bg-white text-gray-900 rounded-bl-md shadow-sm'
           ]"
+          @contextmenu.prevent="showDeleteMenu(message, $event)"
         >
+          <!-- Delete Button (visible on hover) -->
+          <button
+            v-if="message.messageHash"
+            @click="confirmDelete(message)"
+            class="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-lg hover:bg-red-600 flex items-center justify-center"
+            title="Delete for everyone"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
+            </svg>
+          </button>
           <!-- File Attachment -->
           <div v-if="message.file" class="mb-2">
             <!-- P2P Badge -->
@@ -481,6 +493,31 @@ const deleteContact = async () => {
     await chatStore.removeContact(chatStore.activeChat)
     showInfo.value = false
   }
+}
+
+// Delete message
+const confirmDelete = async (message) => {
+  if (!message.messageHash) {
+    alert('Cannot delete this message (no hash)')
+    return
+  }
+  
+  if (confirm('Delete this message for everyone?')) {
+    try {
+      const success = await chatStore.deleteMessage(message.messageHash, chatStore.activeChat)
+      if (!success) {
+        alert('Failed to delete message')
+      }
+    } catch (error) {
+      console.error('Failed to delete message:', error)
+      alert('Failed to delete message: ' + error.message)
+    }
+  }
+}
+
+const showDeleteMenu = (message, event) => {
+  // Same as click delete for now
+  confirmDelete(message)
 }
 
 // Drag and drop handlers

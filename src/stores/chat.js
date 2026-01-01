@@ -6,6 +6,18 @@ import { useAuthStore } from './auth'
 import { peerService } from '../services/peer'
 import { encryptAndUpload, downloadAndDecrypt } from '../services/filedrop'
 
+// Generate unique message ID using SHA256
+const generateMessageId = async (text, timestamp, from, to) => {
+  const entropy = crypto.randomUUID()
+  const data = `${entropy}-${text}-${timestamp}-${from}-${to}`
+  const encoder = new TextEncoder()
+  const dataBuffer = encoder.encode(data)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', dataBuffer)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+  return hashHex
+}
+
 export const useChatStore = defineStore('chat', () => {
   const authStore = useAuthStore()
   
@@ -107,6 +119,38 @@ export const useChatStore = defineStore('chat', () => {
   
   // Handle incoming message from Peer
   const handleIncomingMessage = async (event) => {
+    // Handle delete message
+    if (event.type === 'delete') {
+      console.log('[CHAT] === DELETE MESSAGE REQUEST ===')
+      console.log('[CHAT] Message Hash:', event.messageHash)
+      console.log('[CHAT] From:', event.from)
+      
+      try {
+        // Find and delete from database by messageHash
+        const messagesToDelete = await db.messages.where('messageHash').equals(event.messageHash).toArray()
+        console.log('[CHAT] Found messages to delete:', messagesToDelete.length)
+        
+        if (messagesToDelete.length > 0) {
+          await db.messages.where('messageHash').equals(event.messageHash).delete()
+          
+          // Delete from local state
+          const contactKey = event.from
+          if (messages.value[contactKey]) {
+            messages.value[contactKey] = messages.value[contactKey].filter(
+              msg => msg.messageHash !== event.messageHash
+            )
+          }
+          
+          console.log('[CHAT] ✓ Message deleted')
+        } else {
+          console.log('[CHAT] Message not found in database')
+        }
+      } catch (error) {
+        console.error('[CHAT] ✗ Failed to delete message:', error)
+      }
+      return
+    }
+    
     console.log('[CHAT] === INCOMING MESSAGE ===')
     console.log('[CHAT] Message ID:', event.messageId)
     console.log('[CHAT] From (pubkey):', event.from)
@@ -178,6 +222,14 @@ export const useChatStore = defineStore('chat', () => {
         // Not JSON, regular text message
       }
       
+      // Generate unique message hash
+      const messageHash = await generateMessageId(
+        messageText,
+        event.timestamp,
+        senderPubKey,
+        authStore.publicKey
+      )
+      
       const message = {
         conversationId: senderPubKey,
         text: messageText,
@@ -189,6 +241,7 @@ export const useChatStore = defineStore('chat', () => {
         isRead: activeChat.value === senderPubKey,
         expiresAt: event.timestamp + CACHE_DURATION,
         messageId: event.messageId,
+        messageHash: messageHash,
         file: fileData
       }
       
@@ -232,6 +285,14 @@ export const useChatStore = defineStore('chat', () => {
         // Create blob URL for file
         const fileUrl = URL.createObjectURL(event.blob)
         
+        // Generate unique message hash
+        const messageHash = await generateMessageId(
+          `📎 ${event.fileName}`,
+          event.timestamp,
+          senderPubKey,
+          authStore.publicKey
+        )
+        
         const message = {
           conversationId: senderPubKey,
           text: `📎 ${event.fileName}`,
@@ -241,6 +302,7 @@ export const useChatStore = defineStore('chat', () => {
           isSent: false,
           isRead: activeChat.value === senderPubKey,
           expiresAt: event.timestamp + CACHE_DURATION,
+          messageHash: messageHash,
           file: {
             originalName: event.fileName,
             mimeType: event.mimeType,
@@ -348,12 +410,20 @@ export const useChatStore = defineStore('chat', () => {
       
       const now = Date.now()
       
+      // Generate unique message hash
+      const messageHash = await generateMessageId(
+        messageText,
+        now,
+        authStore.publicKey,
+        contactPublicKey
+      )
+      
       // Send via PeerJS
       let messageId = null
       if (isConnected.value) {
         try {
           console.log('[CHAT] Sending via PeerJS...')
-          messageId = await peerService.sendMessage(contactPublicKey, encryptedText)
+          messageId = await peerService.sendMessage(contactPublicKey, encryptedText, messageHash)
           console.log('[CHAT] ✓ Message sent via PeerJS, message ID:', messageId)
         } catch (error) {
           console.error('[CHAT] ✗ Failed to send via PeerJS:', error)
@@ -372,7 +442,8 @@ export const useChatStore = defineStore('chat', () => {
         isSent: true,
         isRead: true,
         expiresAt: now + CACHE_DURATION,
-        messageId
+        messageId,
+        messageHash
       }
       
       // Save to IndexedDB
@@ -435,12 +506,20 @@ export const useChatStore = defineStore('chat', () => {
       
       const now = Date.now()
       
+      // Generate unique message hash
+      const messageHash = await generateMessageId(
+        caption || `📎 ${fileData.originalName}`,
+        now,
+        authStore.publicKey,
+        contactPublicKey
+      )
+      
       // Send via PeerJS
       let messageId = null
       if (isConnected.value) {
         try {
           console.log('[CHAT] Sending file message via PeerJS...')
-          messageId = await peerService.sendMessage(contactPublicKey, encryptedText)
+          messageId = await peerService.sendMessage(contactPublicKey, encryptedText, messageHash)
           console.log('[CHAT] ✓ File message sent via PeerJS, message ID:', messageId)
         } catch (error) {
           console.error('[CHAT] ✗ Failed to send file via PeerJS:', error)
@@ -458,6 +537,7 @@ export const useChatStore = defineStore('chat', () => {
         isRead: true,
         expiresAt: now + CACHE_DURATION,
         messageId,
+        messageHash,
         file: messagePayload.file
       }
       
@@ -481,6 +561,51 @@ export const useChatStore = defineStore('chat', () => {
     } catch (error) {
       console.error('Failed to send file:', error)
       return null
+    }
+  }
+
+  // Delete message for everyone
+  const deleteMessage = async (messageHash, contactPublicKey) => {
+    console.log('[CHAT] === DELETING MESSAGE ===')
+    console.log('[CHAT] Message Hash:', messageHash)
+    console.log('[CHAT] Contact:', contactPublicKey)
+    
+    if (!messageHash) {
+      console.error('[CHAT] No message hash provided')
+      return false
+    }
+    
+    try {
+      // Delete from database
+      const deleted = await db.messages.where('messageHash').equals(messageHash).delete()
+      console.log('[CHAT] Deleted from DB:', deleted, 'records')
+      
+      // Delete from local state
+      if (messages.value[contactPublicKey]) {
+        const beforeLength = messages.value[contactPublicKey].length
+        messages.value[contactPublicKey] = messages.value[contactPublicKey].filter(
+          msg => msg.messageHash !== messageHash
+        )
+        console.log('[CHAT] Removed from state:', beforeLength - messages.value[contactPublicKey].length, 'messages')
+      }
+      
+      // Send delete instruction to peer if connected
+      if (isConnected.value) {
+        try {
+          await peerService.sendDeleteMessage(contactPublicKey, messageHash)
+          console.log('[CHAT] ✓ Delete instruction sent to peer')
+        } catch (error) {
+          console.error('[CHAT] ✗ Failed to notify peer:', error)
+        }
+      } else {
+        console.log('[CHAT] Not connected - delete will sync when online')
+      }
+      
+      console.log('[CHAT] ✓ Message deleted locally')
+      return true
+    } catch (error) {
+      console.error('[CHAT] ✗ Failed to delete message:', error)
+      return false
     }
   }
 
@@ -509,6 +634,14 @@ export const useChatStore = defineStore('chat', () => {
       // Create blob URL for local display
       const fileUrl = URL.createObjectURL(file)
       
+      // Generate unique message hash
+      const messageHash = await generateMessageId(
+        `📎 ${file.name}`,
+        now,
+        authStore.publicKey,
+        contactPublicKey
+      )
+      
       const message = {
         conversationId: contactPublicKey,
         text: `📎 ${file.name}`,
@@ -518,6 +651,7 @@ export const useChatStore = defineStore('chat', () => {
         isSent: true,
         isRead: true,
         expiresAt: now + CACHE_DURATION,
+        messageHash: messageHash,
         file: {
           originalName: file.name,
           mimeType: file.type,
@@ -706,6 +840,7 @@ export const useChatStore = defineStore('chat', () => {
     sendMessage,
     sendFile,
     sendFileP2P,
+    deleteMessage,
     downloadFile,
     receiveMessage,
     markAsRead,
