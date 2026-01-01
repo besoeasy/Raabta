@@ -4,7 +4,11 @@
       v-if="chatStore.sidebarVisible"
       @mousemove="resetTimer"
       @click="resetTimer"
-      class="w-96 flex-shrink-0 bg-white border-l border-gray-200 flex flex-col h-full overflow-hidden"
+      :class="[
+        'flex-shrink-0 bg-white border-l border-gray-200 flex flex-col h-full overflow-hidden',
+        'fixed md:relative inset-0 md:inset-auto z-50 md:z-auto',
+        'w-full md:w-96'
+      ]"
     >
       <!-- No Chat Selected -->
       <div v-if="!activeContact" class="flex-1 flex items-center justify-center p-6">
@@ -19,12 +23,23 @@
     <!-- Chat Details Content -->
     <template v-else>
       <!-- Header -->
-      <div class="p-6 border-b border-gray-200">
+      <div class="p-4 md:p-6 border-b border-gray-200">
+        <!-- Close button for mobile -->
+        <button 
+          @click="chatStore.sidebarVisible = false"
+          class="absolute top-4 right-4 p-2 hover:bg-gray-100 rounded-full transition md:hidden z-10"
+          title="Close"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-600" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+          </svg>
+        </button>
+
         <div class="text-center">
-          <div class="w-20 h-20 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white text-3xl font-semibold mx-auto mb-3">
+          <div class="w-16 md:w-20 h-16 md:h-20 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white text-2xl md:text-3xl font-semibold mx-auto mb-3">
             {{ activeContact.username.charAt(0).toUpperCase() }}
           </div>
-          <h3 class="text-xl font-semibold text-gray-900 mb-1">{{ activeContact.username }}</h3>
+          <h3 class="text-lg md:text-xl font-semibold text-gray-900 mb-1">{{ activeContact.username }}</h3>
           <p class="text-xs text-gray-500 font-mono">{{ shortenKey(activeContact.publicKey) }}</p>
           
           <!-- Action Buttons -->
@@ -142,7 +157,7 @@
           <!-- Files Grid/List -->
           <div v-if="filteredFiles.length > 0" class="space-y-2">
             <!-- Images Grid -->
-            <div v-if="filterType === 'all' || filterType === 'images'" class="grid grid-cols-3 gap-2">
+            <div v-if="filterType === 'all' || filterType === 'images'" class="grid grid-cols-2 md:grid-cols-3 gap-2">
               <div 
                 v-for="file in (filterType === 'all' ? imageFiles : filteredFiles).slice(0, filterType === 'all' ? 9 : undefined)"
                 :key="file.id"
@@ -213,12 +228,12 @@
         </div>
 
         <!-- Info Tab -->
-        <div v-if="activeTab === 'info'" class="p-4 space-y-6">
+        <div v-if="activeTab === 'info'" class="p-3 md:p-4 space-y-4 md:space-y-6">
           <!-- Statistics -->
           <div>
             <h4 class="text-sm font-semibold text-gray-700 mb-3">Statistics</h4>
-            <div class="grid grid-cols-2 gap-3">
-              <div class="bg-blue-50 rounded-lg p-3">
+            <div class="grid grid-cols-2 gap-2 md:gap-3">
+              <div class="bg-blue-50 rounded-lg p-2 md:p-3">
                 <p class="text-2xl font-bold text-blue-600">{{ messageCount }}</p>
                 <p class="text-xs text-blue-800">Messages</p>
               </div>

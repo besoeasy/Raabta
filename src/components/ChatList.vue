@@ -112,6 +112,7 @@ import { ref, computed } from 'vue'
 import { useChatStore } from '../stores/chat'
 
 const chatStore = useChatStore()
+const emit = defineEmits(['chat-selected'])
 
 const searchQuery = ref('')
 const showAddContact = ref(false)
@@ -159,6 +160,7 @@ const formatTime = (timestamp) => {
 
 const selectChat = (publicKey) => {
   chatStore.setActiveChat(publicKey)
+  emit('chat-selected')
 }
 
 const addNewContact = async () => {

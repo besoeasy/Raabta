@@ -1,27 +1,27 @@
 <template>
   <div class="h-screen flex flex-col bg-gray-50">
     <!-- Header -->
-    <div class="bg-white border-b border-gray-200 px-6 py-4">
-      <div class="flex items-center justify-between max-w-7xl mx-auto">
-        <div class="flex items-center gap-4">
+    <div class="bg-white border-b border-gray-200 px-4 md:px-6 py-3 md:py-4">
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 md:gap-0 max-w-7xl mx-auto">
+        <div class="flex items-center gap-3 md:gap-4">
           <button 
             @click="$router.push('/chat')"
             class="p-2 hover:bg-gray-100 rounded-full transition"
             title="Back to Chat"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 md:h-6 md:w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
             </svg>
           </button>
           <div>
-            <h1 class="text-2xl font-bold text-gray-900">📁 My Drive</h1>
-            <p class="text-sm text-gray-500">All your encrypted files stored locally</p>
+            <h1 class="text-xl md:text-2xl font-bold text-gray-900">📁 My Drive</h1>
+            <p class="text-xs md:text-sm text-gray-500">All your encrypted files stored locally</p>
           </div>
         </div>
         
-        <div class="flex items-center gap-4">
+        <div class="flex items-center justify-between md:justify-end gap-3 md:gap-4">
           <!-- Storage Stats -->
-          <div class="text-right">
+          <div class="text-left md:text-right">
             <p class="text-sm font-medium text-gray-900">{{ fileCount }} files</p>
             <p class="text-xs text-gray-500">{{ formatSize(totalSize) }} used</p>
           </div>
@@ -30,7 +30,7 @@
           <button 
             v-if="fileCount > 0"
             @click="clearAllFiles"
-            class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition"
+            class="px-3 md:px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition text-sm whitespace-nowrap"
           >
             🗑️ Clear All
           </button>
@@ -39,63 +39,66 @@
     </div>
 
     <!-- Filters -->
-    <div class="bg-white border-b border-gray-200 px-6 py-3">
-      <div class="flex items-center gap-3 max-w-7xl mx-auto">
-        <button
-          @click="filterType = 'all'"
-          :class="[
-            'px-4 py-2 rounded-lg text-sm font-medium transition',
-            filterType === 'all' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-          ]"
-        >
-          All ({{ files.length }})
-        </button>
-        <button
-          @click="filterType = 'images'"
-          :class="[
-            'px-4 py-2 rounded-lg text-sm font-medium transition',
-            filterType === 'images' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-          ]"
-        >
-          🖼️ Images ({{ imageFiles.length }})
-        </button>
-        <button
-          @click="filterType = 'videos'"
-          :class="[
-            'px-4 py-2 rounded-lg text-sm font-medium transition',
-            filterType === 'videos' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-          ]"
-        >
-          🎬 Videos ({{ videoFiles.length }})
-        </button>
-        <button
-          @click="filterType = 'audio'"
-          :class="[
-            'px-4 py-2 rounded-lg text-sm font-medium transition',
-            filterType === 'audio' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-          ]"
-        >
-          🎵 Audio ({{ audioFiles.length }})
-        </button>
-        <button
-          @click="filterType = 'documents'"
-          :class="[
-            'px-4 py-2 rounded-lg text-sm font-medium transition',
-            filterType === 'documents' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-          ]"
-        >
-          📄 Documents ({{ documentFiles.length }})
-        </button>
+    <div class="bg-white border-b border-gray-200 px-4 md:px-6 py-3">
+      <div class="flex flex-col md:flex-row md:items-center gap-3 max-w-7xl mx-auto">
+        <!-- Filter Buttons - Horizontal Scroll on Mobile -->
+        <div class="flex items-center gap-2 md:gap-3 overflow-x-auto pb-2 md:pb-0 scrollbar-hide">
+          <button
+            @click="filterType = 'all'"
+            :class="[
+              'px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm font-medium transition whitespace-nowrap flex-shrink-0',
+              filterType === 'all' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            ]"
+          >
+            All ({{ files.length }})
+          </button>
+          <button
+            @click="filterType = 'images'"
+            :class="[
+              'px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm font-medium transition whitespace-nowrap flex-shrink-0',
+              filterType === 'images' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            ]"
+          >
+            🖼️ Images ({{ imageFiles.length }})
+          </button>
+          <button
+            @click="filterType = 'videos'"
+            :class="[
+              'px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm font-medium transition whitespace-nowrap flex-shrink-0',
+              filterType === 'videos' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            ]"
+          >
+            🎬 Videos ({{ videoFiles.length }})
+          </button>
+          <button
+            @click="filterType = 'audio'"
+            :class="[
+              'px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm font-medium transition whitespace-nowrap flex-shrink-0',
+              filterType === 'audio' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            ]"
+          >
+            🎵 Audio ({{ audioFiles.length }})
+          </button>
+          <button
+            @click="filterType = 'documents'"
+            :class="[
+              'px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm font-medium transition whitespace-nowrap flex-shrink-0',
+              filterType === 'documents' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            ]"
+          >
+            📄 Documents ({{ documentFiles.length }})
+          </button>
+        </div>
         
-        <div class="flex-1"></div>
+        <div class="md:flex-1"></div>
         
         <!-- Search -->
-        <div class="relative">
+        <div class="relative w-full md:w-64">
           <input 
             v-model="searchQuery"
             type="text"
             placeholder="Search files..."
-            class="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-64"
+            class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -105,19 +108,19 @@
     </div>
 
     <!-- Files Grid -->
-    <div class="flex-1 overflow-y-auto p-6">
+    <div class="flex-1 overflow-y-auto p-4 md:p-6">
       <div class="max-w-7xl mx-auto">
         <!-- Loading -->
         <div v-if="loading" class="text-center py-12">
-          <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-          <p class="mt-4 text-gray-600">Loading files...</p>
+          <div class="inline-block animate-spin rounded-full h-10 w-10 md:h-12 md:w-12 border-b-2 border-blue-500"></div>
+          <p class="mt-4 text-sm md:text-base text-gray-600">Loading files...</p>
         </div>
 
         <!-- Empty State -->
-        <div v-else-if="filteredFiles.length === 0" class="text-center py-16">
-          <div class="text-6xl mb-4">📂</div>
-          <h3 class="text-xl font-semibold text-gray-700 mb-2">No files found</h3>
-          <p class="text-gray-500">
+        <div v-else-if="filteredFiles.length === 0" class="text-center py-12 md:py-16">
+          <div class="text-5xl md:text-6xl mb-4">📂</div>
+          <h3 class="text-lg md:text-xl font-semibold text-gray-700 mb-2">No files found</h3>
+          <p class="text-sm md:text-base text-gray-500">
             {{ searchQuery ? 'Try a different search term' : 'Start chatting and sharing files!' }}
           </p>
         </div>
@@ -127,7 +130,7 @@
           <div 
             v-for="file in filteredFiles" 
             :key="file.id"
-            class="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-md transition flex items-center gap-4"
+            class="bg-white rounded-lg border border-gray-200 p-3 md:p-4 hover:shadow-md transition flex items-center gap-3 md:gap-4"
           >
             <!-- File Icon/Preview -->
             <div class="flex-shrink-0">
@@ -349,3 +352,15 @@ const clearAllFiles = async () => {
   }
 }
 </script>
+
+<style scoped>
+/* Hide scrollbar for horizontal scroll on mobile */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+</style>

@@ -14,12 +14,23 @@
     <!-- Chat Content -->
     <template v-else>
       <!-- Chat Header -->
-      <div class="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3">
-        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white font-semibold">
+      <div class="bg-white border-b border-gray-200 px-3 md:px-4 py-3 flex items-center gap-2 md:gap-3">
+        <!-- Hamburger Menu (mobile only) -->
+        <button 
+          @click="$emit('toggle-nav')"
+          class="p-2 hover:bg-gray-100 rounded-full transition md:hidden"
+          title="Menu"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+
+        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white font-semibold flex-shrink-0">
           {{ activeContact.username.charAt(0).toUpperCase() }}
         </div>
-        <div class="flex-1">
-          <h3 class="font-semibold text-gray-900">{{ activeContact.username }}</h3>
+        <div class="flex-1 min-w-0">
+          <h3 class="font-semibold text-gray-900 text-sm md:text-base">{{ activeContact.username }}</h3>
           <p class="text-xs text-gray-500 truncate font-mono">{{ shortenKey(activeContact.publicKey) }}</p>
         </div>
         
@@ -92,7 +103,8 @@
           v-for="message in chatMessages" 
           :key="message.id"
           :class="[
-            'max-w-[75%] rounded-2xl px-4 py-2 relative group',
+            'rounded-2xl px-3 md:px-4 py-2 relative group',
+            'max-w-[85%] md:max-w-[75%]',
             message.isSent 
               ? 'ml-auto bg-blue-500 text-white rounded-br-md' 
               : 'mr-auto bg-white text-gray-900 rounded-bl-md shadow-sm'
@@ -246,16 +258,16 @@
       </div>
 
       <!-- Input Area -->
-      <div class="bg-white border-t border-gray-200 p-4">
+      <div class="bg-white border-t border-gray-200 p-3 md:p-4">
         <form @submit.prevent="sendMessage" class="flex gap-2 items-end">
           <!-- File Attachment Button (Server) -->
           <button 
             type="button"
             @click="$refs.fileInput.click()"
-            class="p-2 hover:bg-gray-100 rounded-full transition text-gray-600"
+            class="p-2 hover:bg-gray-100 rounded-full transition text-gray-600 flex-shrink-0"
             title="Attach file (via server)"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 md:h-6 md:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
             </svg>
           </button>
@@ -270,10 +282,10 @@
           <button 
             type="button"
             @click="$refs.p2pFileInput.click()"
-            class="p-2 hover:bg-green-100 rounded-full transition text-green-600"
+            class="p-2 hover:bg-green-100 rounded-full transition text-green-600 flex-shrink-0"
             title="Send file P2P (no server)"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 md:h-6 md:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
             </svg>
           </button>
@@ -288,12 +300,12 @@
             v-model="newMessage"
             type="text" 
             placeholder="Type a message..."
-            class="flex-1 px-4 py-2 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+            class="flex-1 px-3 md:px-4 py-2 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm md:text-base"
           />
           <button 
             type="submit"
             :disabled="!newMessage.trim() || isUploading"
-            class="bg-blue-500 text-white px-4 py-2 rounded-full hover:bg-blue-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            class="bg-blue-500 text-white p-2 md:px-4 md:py-2 rounded-full hover:bg-blue-600 transition disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
           >
             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
               <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
@@ -383,6 +395,12 @@ import { useChatStore } from '../stores/chat'
 import { isImageFile, isVideoFile, isAudioFile, formatFileSize } from '../services/filedrop'
 import CallWindow from './CallWindow.vue'
 import IncomingCallModal from './IncomingCallModal.vue'
+
+defineProps({
+  showMobileNav: Boolean
+})
+
+const emit = defineEmits(['toggle-nav'])
 
 const chatStore = useChatStore()
 
